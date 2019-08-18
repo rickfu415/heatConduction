@@ -18,6 +18,6 @@ A 1D heat conduction solver using Finite Difference Method and implicit backward
 2. [Modeling of One-Dimensional Ablation with Porous Flow using Finite Control Volume Procedure](http://www.lib.ncsu.edu/resolver/1840.16/2847).
 
 ## Citation:
-If you are using the code for your research or study, please consider cite me :) I am a pity PhD......
+If you are using the code for your research or study, please consider cite me :) I am a miserable PhD ......
 1. [Thermomechanical Coupling for Charring Ablators](https://doi.org/10.2514/1.T5194).
 2. [Thermal Expansion for Charring Ablative Materials](https://doi.org/10.2514/1.T5718).
