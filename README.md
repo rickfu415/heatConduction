@@ -15,5 +15,5 @@ A 1D heat conduction solver using Finite Difference Method and implicit backward
     
 ## Reference:
 If you are using the code for your research or study, please consider cite me!
-1. Thermomechanical Coupling for Charring Ablators[GitHub Pages](https://doi.org/10.2514/1.T5194).
-2. Thermal Expansion for Charring Ablative Materials[GitHub Pages](https://doi.org/10.2514/1.T5718).
+1. Thermomechanical Coupling for Charring Ablators [Link](https://doi.org/10.2514/1.T5194).
+2. Thermal Expansion for Charring Ablative Materials [Link](https://doi.org/10.2514/1.T5718).
