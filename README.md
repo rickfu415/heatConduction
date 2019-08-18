@@ -14,6 +14,10 @@ A 1D heat conduction solver using Finite Difference Method and implicit backward
     2. To compare with analytic solution, open analyticSolution.py, execute.  
     
 ## Reference:
-If you are using the code for your research or study, please consider cite me!
+1. Numerical analysis [Link](http://web.engr.uky.edu/~acfd/egr537-lctrs.pdf).
+2. Modeling of One-Dimensional Ablation with Porous Flow using Finite Control Volume Procedure [Link](http://www.lib.ncsu.edu/resolver/1840.16/2847).
+
+## Citation:
+If you are using the code for your research or study, please consider cite me :) I am a pity PhD......
 1. Thermomechanical Coupling for Charring Ablators [Link](https://doi.org/10.2514/1.T5194).
 2. Thermal Expansion for Charring Ablative Materials [Link](https://doi.org/10.2514/1.T5718).
