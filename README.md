@@ -1,8 +1,9 @@
-# 1D Heat Conduction Solver
+# 1D Heat Conduction Solver (08-21-2019)
 A 1D heat conduction solver using Finite Difference Method and implicit backward Euler time scheme.  
 
 ## Features:  
-    1. Finite Difference Method.  
+    1. Fully modularized, easy to customize for your own problem.  
+    1. Only use the common packages, Numpy, Pandas and Matplotlib.  
     2. Centered Differecing in space (second order accuracy), implicit backward Euler time scheme (First order accuracy).  
     3. Using Newton's method to solve discretized equation system at each time step.  
     4. Two types of boundary conditions, fixed temperature and fixed heat flux.  
