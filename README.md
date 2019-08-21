@@ -1,5 +1,5 @@
 # 1D Heat Conduction Solver (08-21-2019)
-A 1D heat conduction solver using Finite Difference Method and implicit backward Euler time scheme.  
+A transient 1D heat conduction solver using Finite Difference Method and implicit backward Euler time scheme.  
 
 ## Features:  
     1. Fully modularized, easy to customize for your own problem.  
