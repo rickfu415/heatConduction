@@ -1,5 +1,8 @@
-# 1D Heat Conduction Solver (08-21-2019)
+# 1D Heat Conduction Solver 
 A transient 1D heat conduction solver using Finite Difference Method and implicit backward Euler time scheme.  
+
+## Updates (08-24-2019)
+Added a Jupyter notebook as a demo case for the solver. Very straight forward and the results are beautifully plotted. Enjoy!
 
 ## Features:  
     1. Fully modularized, easy to customize for your own problem.  
