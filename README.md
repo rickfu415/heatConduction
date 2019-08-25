@@ -14,6 +14,7 @@ Added a Jupyter notebook as a demo case for the solver. Very straight forward an
     6. Incoporate with postprocessing module and analytic solution comparison.   
 
 ## How to run:  
+    0. Clone the repository.  
     1. In any Python IDE, open parameter.py, execute.  
     2. To compare with analytic solution, open analyticSolution.py, execute.  
     
