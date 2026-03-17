@@ -7,6 +7,7 @@ Created on Wed Jul 31 22:41:22 2019
 import postprocessing as pp
 import heatConduction as hc
 import pandas as pd
+import os
 
 
 def main():
@@ -29,6 +30,7 @@ def main():
     df.at['ODEsolver'] = 'NewtonIteration'
     df.at['linearSolver'] = 'numpy linalg'
     df.at['CPU'] = 1
+    df.at['output'] = 'results'
     
     # Material
     df.at['material'] = 'steel'
@@ -62,13 +64,17 @@ def main():
 
 if __name__ == "__main__":
     parameter = main()
+    outputDir = parameter['output']
+    os.makedirs(outputDir, exist_ok=True)
     results, cache = hc.solve(parameter)
     T = pp.preprocess(parameter, results)
-    pp.evolutionField(T)
+    T.to_csv(os.path.join(outputDir, 'solutionHistory.csv'))
+    cache['Log'].to_csv(os.path.join(outputDir, 'solverLog.csv'))
+    pp.evolutionField(T, outputDir)
     positions = [0, 0.002, 0.004, 0.006, 0.008, 0.01]
-    pp.thermalCouplePlot(T, positions)
+    pp.thermalCouplePlot(T, positions, outputDir)
     times = [0, 2, 4, 6, 8, 10]
-    pp.temperatureDistribution(T, times)
+    pp.temperatureDistribution(T, times, outputDir)
     
     
     

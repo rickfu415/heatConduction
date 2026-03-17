@@ -5,51 +5,56 @@ Created on Wed Jul 31 23:07:48 2019
 @author: RickFu
 """
 from mpl_toolkits.mplot3d import Axes3D
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from matplotlib import cm
 import numpy as np
 import pandas as pd
+import os
 
 
 
-def evolutionField(results):
+def evolutionField(results, outputDir=None):
     """ Generate 3D temperature fields
-    
+
     For better understanding of the results
-    
+
     Inputs:
         1. parameter, a pandas series
         2. results, a numpy array
     """
-    
+
     X = results.index
     Y = results.columns
     X, Y = np.meshgrid(X, Y)
-    
+
     fig = plt.figure(figsize=(8,6))
     ax = fig.add_subplot(111, projection='3d')
     ax.set_xlabel('x, m')
     ax.set_ylabel('Time, s')
     ax.set_zlabel('Temperature, K')
     Z = results.T.values
-    ax.plot_surface(X, Y, Z, 
+    ax.plot_surface(X, Y, Z,
                     cmap=cm.seismic,
-                    linewidth=0, 
+                    linewidth=0,
                     antialiased=False)
-    plt.show()
+    if outputDir:
+        fig.savefig(os.path.join(outputDir, 'evolutionField.png'), dpi=150)
+    plt.close(fig)
 
 
 
-def thermalCouplePlot(results, positions):
+def thermalCouplePlot(results, positions, outputDir=None):
     """ Generate x-y plots as thermo-couple data
-    
+
     Inputs:
         1. results, a pandas DataFrame
         2. Positions, a list of positions of the generated
            grids.
 
     """
-    
+
     df = results.loc[positions,:]
     df = df.T
     df = df.add_prefix('x = ')
@@ -57,24 +62,30 @@ def thermalCouplePlot(results, positions):
     ax = df.plot(grid=True)
     ax.set_xlabel("Time, s")
     ax.set_ylabel("Temperature, K")
+    if outputDir:
+        ax.get_figure().savefig(os.path.join(outputDir, 'thermalCouple.png'), dpi=150)
+    plt.close(ax.get_figure())
 
 
 
-def temperatureDistribution(results, times):
+def temperatureDistribution(results, times, outputDir=None):
     """ Generate temperature distribution at different times
-    
+
     Inputs:
         1. results, a pandas DataFrame
-        2. times, a list of timings on the calculated 
+        2. times, a list of timings on the calculated
            time steps
     """
-    
+
     df = results.loc[:,times]
     df = df.add_prefix('t = ')
     df = df.add_suffix(' s')
     ax = df.plot(grid=True)
     ax.set_xlabel("x, m")
     ax.set_ylabel("Temperature, K")
+    if outputDir:
+        ax.get_figure().savefig(os.path.join(outputDir, 'temperatureDistribution.png'), dpi=150)
+    plt.close(ax.get_figure())
 
 
 
