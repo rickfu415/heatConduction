@@ -58,6 +58,9 @@ def main():
     df.at['x=0 value'] = 750000
     df.at['x=L type'] = 'heatFlux'#'heatFlux' or 'fixedTemperature'
     df.at['x=L value'] = 0.
+
+    # Differential target
+    df.at['back_wall_temperature_target'] = 450
     return df
 
 

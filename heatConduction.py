@@ -179,10 +179,13 @@ def newtonIteration(para, cache):
             log.loc[ts,'Residual'] = norm
             break
         cache = solveLinearSystem(para, cache)
+    T = cache['T']
     print(' [','{:3.0f}'.format(ts), ']',
           ' [','{:6.2f}'.format(ts*dt),']',
           ' [','{:2.0f}'.format(n+1), ']',
-          ' [','{:8.2E}'.format(norm),']')
+          ' [','{:8.2E}'.format(norm),']',
+          ' [','{:8.2f}'.format(T[0,0]),']',
+          ' [','{:8.2f}'.format(T[-1,0]),']')
     return cache
 
 
@@ -205,7 +208,7 @@ def solve(para):
     start = time.time()
     cache = initialize(para)
     numOfTimeStep = para['numberOfTimeStep']
-    print(' [Step] [Pysical Time] [Iteration] [Residue]')
+    print(' [Step] [Pysical Time] [Iteration] [Residue]    [T_0]      [T_L]')
     for timeStep in range(1, numOfTimeStep+1):
         cache['ts'] = timeStep
         cache = newtonIteration(para, cache)
