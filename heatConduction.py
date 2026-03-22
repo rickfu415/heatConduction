@@ -151,9 +151,9 @@ def storeUpdateResult(cache):
     return cache
 
 
-def newtonIteration(para, cache):
+def newtonIteration(para, cache, verbose=True):
     """ Newton's Iteration for Equation System
-    
+
     Process:
         1. Get max iteratino, convergence limit
         2. Call assemble function to get Jacobian and F(RHS)
@@ -161,9 +161,9 @@ def newtonIteration(para, cache):
         4. Evaluate F, get value of 2-norm
         5. If solution converged, break, output to screen and
            return cache.
-    
+
     """
-    
+
     maxIteration = para['maxIteration']
     convergence = para['convergence']
     dt = para['deltaTime']
@@ -179,43 +179,47 @@ def newtonIteration(para, cache):
             log.loc[ts,'Residual'] = norm
             break
         cache = solveLinearSystem(para, cache)
-    T = cache['T']
-    print(' [','{:3.0f}'.format(ts), ']',
-          ' [','{:6.2f}'.format(ts*dt),']',
-          ' [','{:2.0f}'.format(n+1), ']',
-          ' [','{:8.2E}'.format(norm),']',
-          ' [','{:8.2f}'.format(T[0,0]),']',
-          ' [','{:8.2f}'.format(T[-1,0]),']')
+    if verbose:
+        T = cache['T']
+        print(' [','{:3.0f}'.format(ts), ']',
+              ' [','{:6.2f}'.format(ts*dt),']',
+              ' [','{:2.0f}'.format(n+1), ']',
+              ' [','{:8.2E}'.format(norm),']',
+              ' [','{:8.2f}'.format(T[0,0]),']',
+              ' [','{:8.2f}'.format(T[-1,0]),']')
     return cache
 
 
-def solve(para):
+def solve(para, verbose=True):
     """ Main function to solve heat conduction
-    
+
     Input: a Pandas series containing all parameters
-    
+
     Process:
         1. Initialize cache
-        2. Time marching 
-        3. Newton's iteration for discretized PDE for singe time 
+        2. Time marching
+        3. Newton's iteration for discretized PDE for singe time
            step
         4. Update T, save result to T profile
-    
+
     Return: temperature profile as final result
     """
-    
-    print(" Heat Conduction Solver")
+
+    if verbose:
+        print(" Heat Conduction Solver")
     start = time.time()
     cache = initialize(para)
     numOfTimeStep = para['numberOfTimeStep']
-    print(' [Step] [Pysical Time] [Iteration] [Residue]    [T_0]      [T_L]')
+    if verbose:
+        print(' [Step] [Pysical Time] [Iteration] [Residue]    [T_0]      [T_L]')
     for timeStep in range(1, numOfTimeStep+1):
         cache['ts'] = timeStep
-        cache = newtonIteration(para, cache)
+        cache = newtonIteration(para, cache, verbose=verbose)
         cache = storeUpdateResult(cache)
     TProfile = cache['TProfile']
     runtime = time.time() - start
-    print('[Cost] CPU time spent','%.3f'%runtime,'s')
+    if verbose:
+        print('[Cost] CPU time spent','%.3f'%runtime,'s')
     return TProfile, cache
 
 
