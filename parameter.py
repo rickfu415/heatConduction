@@ -41,14 +41,14 @@ def main():
     
     # Grid
     df.at['length'] = 0.01
-    df.at['numberOfNode'] = 51
+    df.at['numberOfNode'] = 101
     
     # Solution
-    df.at['numberOfTimeStep'] = 50#400
-    df.at['deltaTime'] = 0.2
-    df.at['maxIteration'] = 20
-    df.at['convergence'] = 1E-10
-    df.at['relaxation'] = 1 # value in [0-1] Very sensitive!!!
+    df.at['numberOfTimeStep'] = 100#400
+    df.at['deltaTime'] = 0.1
+    df.at['maxIteration'] = 100
+    df.at['convergence'] = 1E-9
+    df.at['relaxation'] = 0.9 # value in [0-1] Very sensitive!!!
     
     # Initial conditions
     df.at['IC value'] = 298.
