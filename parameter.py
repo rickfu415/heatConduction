@@ -69,16 +69,18 @@ def main():
     
     # Environment
     df.at['ambientTemperature'] = 298.
+    df.at['stefanBoltzmann'] = 5.670374419e-8  # W/(m^2 K^4)
+    df.at['emissivity'] = 0.9
 
     # Initial conditions
     df.at['IC value'] = 298.
-    
+
     # Boundary conditions
     df.at['x=0 type'] = 'heatFlux'#'heatFlux' or 'fixedTemperature'
     df.at['x=0 value'] = 1e6
     df.at['x=L type'] = 'heatFlux'#'heatFlux' or 'fixedTemperature'
     df.at['x=L value'] = 0.
-    df.at['re-radiate'] = True 
+    df.at['re-radiate'] = True
     
     # Differential target
     df.at['back_wall_temperature_target'] = 450
@@ -197,9 +199,10 @@ if __name__ == "__main__":
     T.to_csv(os.path.join(outputDir, 'solutionHistory.csv'))
     cache['Log'].to_csv(os.path.join(outputDir, 'solverLog.csv'))
     pp.evolutionField(T, outputDir)
-    positions = [0, 0.002, 0.004, 0.006, 0.008, 0.01]
+    positions = pp.probePositions(parameter)
     pp.thermalCouplePlot(T, positions, outputDir)
-    times = [0, 2, 4, 6, 8, 10]
+    totalTime = parameter['numberOfTimeStep'] * parameter['deltaTime']
+    times = np.linspace(0, totalTime, 6).round(5).tolist()
     pp.temperatureDistribution(T, times, outputDir)
     
     

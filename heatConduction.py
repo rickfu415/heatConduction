@@ -33,6 +33,13 @@ def assemble(para, cache):
     valueX0 = para['x=0 value']
     typeXL = para['x=L type']
     valueXL = para['x=L value']
+    reradiate = para.get('re-radiate', False)
+
+    # Re-radiation parameters
+    if reradiate:
+        sigma = para['stefanBoltzmann']
+        eps_r = para['emissivity']
+        T_amb = para['ambientTemperature']
 
     # Containers
     T = cache['T']; T0 = cache['T0']
@@ -40,24 +47,32 @@ def assemble(para, cache):
 
     # Precompute interface conductivities and spacings
     k_half = np.zeros(numberOfNode + 1)
-    dx_half = np.zeros(numberOfNode + 1)  # spacing at each interface
+    dx_half = np.zeros(numberOfNode + 1)
     for i in range(numberOfNode - 1):
         k_half[i + 1] = 0.5 * (k[i] + k[i + 1])
         dx_half[i + 1] = dx_arr[i]
-    # Ghost interfaces mirror boundary
     k_half[0] = k[0];                dx_half[0] = dx_arr[0]
     k_half[numberOfNode] = k[-1];    dx_half[numberOfNode] = dx_arr[-1]
 
-    # Boundary ghost values for temperature
+    # Compute effective heat flux at boundaries (including re-radiation)
     dx0 = dx_arr[0]
     dxN = dx_arr[-1]
+    qX0 = valueX0
+    qXL = valueXL
+    if reradiate:
+        if typeX0 == 'heatFlux':
+            qX0 = valueX0 - eps_r * sigma * (T[0, 0]**4 - T_amb**4)
+        if typeXL == 'heatFlux':
+            qXL = valueXL - eps_r * sigma * (T[-1, 0]**4 - T_amb**4)
+
+    # Boundary ghost values for temperature
     if typeX0 == 'heatFlux':
-        Ug1 = utility.fixedGradient(valueX0, k[0], dx0, T[1])
+        Ug1 = utility.fixedGradient(qX0, k[0], dx0, T[1])
     elif typeX0 == 'fixedTemperature':
         Ug1 = utility.fixedValue(valueX0, T[1])
 
     if typeXL == 'heatFlux':
-        Ug2 = utility.fixedGradient(valueXL, k[-1], dxN, T[-2])
+        Ug2 = utility.fixedGradient(qXL, k[-1], dxN, T[-2])
     elif typeXL == 'fixedTemperature':
         Ug2 = utility.fixedValue(valueXL, T[-2])
 
@@ -81,7 +96,6 @@ def assemble(para, cache):
 
         if i == 0:
             if typeX0 == 'heatFlux':
-                # Ghost Ug1 depends on T[1], so west+east both contribute to off-diag
                 Jacobian[0][1] = -(ce * k_east + cw * k_west)
             elif typeX0 == 'fixedTemperature':
                 Jacobian[0][1] = -ce * k_east + cw * k_west
@@ -93,6 +107,21 @@ def assemble(para, cache):
         else:
             Jacobian[i][i + 1] = -ce * k_east
             Jacobian[i][i - 1] = -cw * k_west
+
+    # Re-radiation Jacobian correction at boundary nodes
+    # dq_rad/dT = -4*eps*sigma*T^3, enters through the ghost flux
+    # Extra diagonal contribution: dt/(rho*cp) * 2/(h_i) * eps*sigma*4*T^3
+    if reradiate:
+        if typeX0 == 'heatFlux':
+            h_0 = 0.5 * (dx_half[0] + dx_half[1])
+            rad_jac_0 = dt / (rho[0]*hcp[0]) * 2.0 / h_0 * eps_r * sigma * 4 * T[0, 0]**3
+            Jacobian[0][0] += rad_jac_0
+            Jacobian[0][1] -= rad_jac_0  # ghost depends on T[1] for heatFlux BC
+        if typeXL == 'heatFlux':
+            h_N = 0.5 * (dx_half[-2] + dx_half[-1])
+            rad_jac_N = dt / (rho[-1]*hcp[-1]) * 2.0 / h_N * eps_r * sigma * 4 * T[-1, 0]**3
+            Jacobian[-1][-1] += rad_jac_N
+            Jacobian[-1][-2] -= rad_jac_N
 
     # Calculate F using variable-coefficient diffusion with non-uniform grid
     diffusion = utility.variableCoefficientDiffusion(T, k, dx_arr, Ug1, Ug2)

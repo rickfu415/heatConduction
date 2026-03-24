@@ -154,4 +154,6 @@ if __name__ == "__main__":
     df_hist.to_csv(os.path.join(outputDir, 'optimizationHistory.csv'), index=False)
 
     pp.evolutionField(T, outputDir)
+    positions = pp.probePositions(para)
+    pp.thermalCouplePlot(T, positions, outputDir)
     print('\nResults saved to:', outputDir)

@@ -53,16 +53,37 @@ def main(para, cache, verbose=True):
     # Properties (per-node arrays)
     rho = para['density']
     hcp = para['heatCapacity']
+    dt = para['deltaTime']
 
     # BC info
     typeX0 = para['x=0 type']
     typeXL = para['x=L type']
+    reradiate = para.get('re-radiate', False)
+    if reradiate:
+        sigma = para['stefanBoltzmann']
+        eps_r = para['emissivity']
+        T_amb = para['ambientTemperature']
 
     # Jacobian and per-node coefficients from forward solve
-    M = cache['Jacobian']
-    MT = M.T
-    ce = cache['ce_arr']  # east coefficient per node
-    cw = cache['cw_arr']  # west coefficient per node
+    # M_base is the Jacobian without re-radiation (constant across timesteps)
+    M_base = cache['Jacobian'].copy()
+    ce = cache['ce_arr']
+    cw = cache['cw_arr']
+
+    # Remove re-radiation from M_base so we can re-add it per timestep
+    if reradiate:
+        dx_arr = para['dx_array']
+        T_last = cache['TProfile'][:, -1]
+        if typeX0 == 'heatFlux':
+            h_0 = 0.5 * (dx_arr[0] + dx_arr[0])
+            rad0 = dt / (rho[0]*hcp[0]) * 2.0/h_0 * eps_r*sigma*4*T_last[0]**3
+            M_base[0, 0] -= rad0
+            M_base[0, 1] += rad0
+        if typeXL == 'heatFlux':
+            h_N = 0.5 * (dx_arr[-1] + dx_arr[-1])
+            radN = dt / (rho[-1]*hcp[-1]) * 2.0/h_N * eps_r*sigma*4*T_last[-1]**3
+            M_base[-1, -1] -= radN
+            M_base[-1, -2] += radN
 
     # Reverse time loop
     reversedtimeSteps = timeSteps[::-1]
@@ -70,6 +91,23 @@ def main(para, cache, verbose=True):
         print(' [Step]  [T_L]      [lambda_L]   [|grad_k|]')
     for ts in reversedtimeSteps:
         T_n = cache['TProfile'][:, ts]
+
+        # Rebuild M at this timestep (add re-radiation evaluated at T_n)
+        if reradiate:
+            M = M_base.copy()
+            if typeX0 == 'heatFlux':
+                h_0 = 0.5 * (dx_arr[0] + dx_arr[0])
+                rad0 = dt / (rho[0]*hcp[0]) * 2.0/h_0 * eps_r*sigma*4*T_n[0]**3
+                M[0, 0] += rad0
+                M[0, 1] -= rad0
+            if typeXL == 'heatFlux':
+                h_N = 0.5 * (dx_arr[-1] + dx_arr[-1])
+                radN = dt / (rho[-1]*hcp[-1]) * 2.0/h_N * eps_r*sigma*4*T_n[-1]**3
+                M[-1, -1] += radN
+                M[-1, -2] -= radN
+            MT = M.T
+        else:
+            MT = M_base.T
 
         # Backward propagation: solve M^T * w = lambda
         lambda_current = np.linalg.solve(MT, lambda_current)
