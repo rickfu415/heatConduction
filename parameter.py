@@ -51,18 +51,18 @@ def main():
     # Material layers: list of material names from the database.
     # One name = constant material, multiple = layered TPS.
     df.at['materials'] = ['pica', 'steel_304']
-    df.at['layerThicknesses'] = np.array([0.05, 0.05])  # sum = length
+    df.at['layerThicknesses'] = np.array([0.025, 0.025])  # sum = length
 
     # Derived from materials list (populated by load_materials)
     df = load_materials(df)
     
     # Grid: nodes per layer (boundaries are shared between layers)
-    df.at['length'] = 0.1
+    df.at['length'] = 0.05
     df.at['nodesPerLayer'] = 51  # nodes in each layer (including shared boundaries)
     
     # Solution
-    df.at['numberOfTimeStep'] = 400#400
-    df.at['deltaTime'] = 1
+    df.at['numberOfTimeStep'] = 120#400
+    df.at['deltaTime'] = 0.1
     df.at['maxIteration'] = 100
     df.at['convergence'] = 1E-9
     df.at['relaxation'] = 0.9 # value in [0-1] Very sensitive!!!
@@ -77,7 +77,7 @@ def main():
 
     # Boundary conditions
     df.at['x=0 type'] = 'heatFlux'#'heatFlux' or 'fixedTemperature'
-    df.at['x=0 value'] = 1e6
+    df.at['x=0 value'] = 5e6
     df.at['x=L type'] = 'heatFlux'#'heatFlux' or 'fixedTemperature'
     df.at['x=L value'] = 0.
     df.at['re-radiate'] = True
