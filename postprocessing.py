@@ -89,6 +89,40 @@ def temperatureDistribution(results, times, outputDir=None):
 
 
 
+def probePositions(parameter, probes_per_layer=5):
+    """ Generate thermocouple probe positions from layer configuration.
+
+    Places probes evenly within each layer, snapped to actual grid nodes.
+    """
+    # Build actual grid positions
+    dx_arr = parameter['dx_array']
+    N = parameter['numberOfNode']
+    x = np.zeros(N)
+    for i in range(N - 1):
+        x[i + 1] = x[i] + dx_arr[i]
+
+    def snap(target):
+        """Snap target position to nearest grid node."""
+        idx = np.argmin(np.abs(x - target))
+        return round(x[idx], 5)
+
+    if parameter.get('material function') == 'layered':
+        t_layers = parameter['layerThicknesses']
+        boundaries = np.cumsum(t_layers)
+        starts = np.concatenate([[0], boundaries[:-1]])
+        positions = set()
+        for s, e in zip(starts, boundaries):
+            for p in np.linspace(s, e, probes_per_layer):
+                positions.add(snap(p))
+        return sorted(positions)
+    else:
+        length = x[-1]
+        positions = set()
+        for p in np.linspace(0, length, probes_per_layer * 2):
+            positions.add(snap(p))
+        return sorted(positions)
+
+
 def preprocess(parameter, results):
     """ Pre-Process results
     
@@ -104,12 +138,16 @@ def preprocess(parameter, results):
         columns as grid positions
     """
     
-    length = parameter['length']
     numberOfNode = parameter['numberOfNode']
     numOfTimeStep = parameter['numberOfTimeStep']
     deltaTime = parameter['deltaTime']
     time = deltaTime * numOfTimeStep
-    grids = np.linspace(0, length, numberOfNode).round(5)
+    # Build x-positions from dx_array (supports non-uniform layered grid)
+    dx_arr = parameter['dx_array']
+    grids = np.zeros(numberOfNode)
+    for i in range(numberOfNode - 1):
+        grids[i + 1] = grids[i] + dx_arr[i]
+    grids = grids.round(5)
     times = np.linspace(0, time, numOfTimeStep+1).round(5)
     df = pd.DataFrame(results, 
                       index = grids, 
