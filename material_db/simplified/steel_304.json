@@ -1,0 +1,11 @@
+{
+  "id": "steel_304",
+  "name": "Stainless Steel 304",
+  "description": "Austenitic stainless steel — common structural substrate and back wall material",
+  "category": "metal",
+  "density": 7900.0,
+  "conductivity": 16.2,
+  "heat_capacity": 500.0,
+  "max_service_temperature": 1100.0,
+  "source": "ASM International"
+}

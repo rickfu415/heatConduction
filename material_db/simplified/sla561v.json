@@ -1,0 +1,11 @@
+{
+  "id": "sla561v",
+  "name": "SLA-561V",
+  "description": "Super Lightweight Ablator — silicone-based ablative TPS used on Mars Viking, Pathfinder, and MER missions",
+  "category": "ablator",
+  "density": 256.0,
+  "conductivity": 0.12,
+  "heat_capacity": 1256.0,
+  "max_service_temperature": 2500.0,
+  "source": "Lockheed Martin"
+}

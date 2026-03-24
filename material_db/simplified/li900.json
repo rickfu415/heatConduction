@@ -1,0 +1,11 @@
+{
+  "id": "li900",
+  "name": "LI-900",
+  "description": "Lockheed Insulation 900 — silica fiber tile used on Space Shuttle lower surfaces",
+  "category": "insulator",
+  "density": 144.0,
+  "conductivity": 0.04,
+  "heat_capacity": 628.0,
+  "max_service_temperature": 1530.0,
+  "source": "Lockheed Martin / NASA Space Shuttle Program"
+}

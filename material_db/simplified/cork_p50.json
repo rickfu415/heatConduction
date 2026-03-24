@@ -1,0 +1,11 @@
+{
+  "id": "cork_p50",
+  "name": "Cork P50",
+  "description": "Cork-based ablative TPS — used on Ariane 5 and Vega launchers for fairing and booster protection",
+  "category": "ablator",
+  "density": 480.0,
+  "conductivity": 0.12,
+  "heat_capacity": 1200.0,
+  "max_service_temperature": 1800.0,
+  "source": "Amorim Cork Composites / ESA"
+}

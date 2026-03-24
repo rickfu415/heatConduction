@@ -1,0 +1,11 @@
+{
+  "id": "rcc",
+  "name": "RCC",
+  "description": "Reinforced Carbon-Carbon — used on Space Shuttle nose cap and wing leading edges, extreme temperature capability",
+  "category": "composite",
+  "density": 1600.0,
+  "conductivity": 40.0,
+  "heat_capacity": 712.0,
+  "max_service_temperature": 1920.0,
+  "source": "NASA Space Shuttle Program"
+}

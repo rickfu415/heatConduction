@@ -1,0 +1,11 @@
+{
+  "id": "sic_sic",
+  "name": "SiC/SiC CMC",
+  "description": "Silicon Carbide fiber reinforced Silicon Carbide matrix — ceramic matrix composite for hot structures",
+  "category": "ceramic",
+  "density": 2700.0,
+  "conductivity": 15.0,
+  "heat_capacity": 680.0,
+  "max_service_temperature": 1900.0,
+  "source": "General literature"
+}

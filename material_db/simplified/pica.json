@@ -1,0 +1,11 @@
+{
+  "id": "pica",
+  "name": "PICA",
+  "description": "Phenolic Impregnated Carbon Ablator — lightweight ablative TPS used on Stardust and Mars Science Laboratory",
+  "category": "ablator",
+  "density": 265.0,
+  "conductivity": 0.21,
+  "heat_capacity": 1590.0,
+  "max_service_temperature": 3300.0,
+  "source": "NASA Ames Research Center"
+}

@@ -1,0 +1,11 @@
+{
+  "id": "carbon_carbon",
+  "name": "C/C Composite",
+  "description": "Carbon/Carbon composite — ultra-high temperature structural material for leading edges and rocket nozzles",
+  "category": "composite",
+  "density": 1750.0,
+  "conductivity": 50.0,
+  "heat_capacity": 750.0,
+  "max_service_temperature": 3000.0,
+  "source": "General literature"
+}

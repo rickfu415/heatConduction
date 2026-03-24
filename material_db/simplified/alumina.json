@@ -1,0 +1,11 @@
+{
+  "id": "alumina",
+  "name": "Alumina (Al₂O₃)",
+  "description": "Aluminum oxide ceramic — high temperature insulator and thermal barrier coating material",
+  "category": "ceramic",
+  "density": 3950.0,
+  "conductivity": 30.0,
+  "heat_capacity": 775.0,
+  "max_service_temperature": 2050.0,
+  "source": "General literature"
+}
