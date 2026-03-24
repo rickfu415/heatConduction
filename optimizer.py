@@ -3,99 +3,137 @@ Created on 03 21 2026
 
 @author: RickFu
 
-Gradient-based optimizer for heat conduction inverse problem.
-Finds the conductivity k such that the back-wall temperature
-matches the target at the final time.
+Adjoint-based optimizer for layered TPS heat conduction.
+
+Framework:
+    forward solver → adjoint (dJ/dk, dJ/drho, dJ/dcp per node)
+    → chain rule (map to layer thickness gradient) → gradient descent
 """
 import heatConduction as hc
 import differential as diff
 import postprocessing as pp
 import parameter
+import numpy as np
 import os
 
 
-def optimize(para, max_iter=200, tol=1e-2):
-    """ Newton's method optimization loop
+def chain_rule(adjoint_result, para):
+    """ Map per-node adjoint gradients to layer thickness gradient.
 
-    Iterates forward solve -> adjoint -> Newton update on k until
-    the back-wall temperature matches the target.
+    When a layer boundary moves right by delta, nodes switch from
+    layer l+1 to layer l. Their k, rho, cp all change. The total
+    sensitivity is the sum of contributions from all three properties.
 
-    Uses: dT_L/dk = dJ/dk / (T_L - target)
-    Newton step: k_new = k - (T_L - target) / (dT_L/dk)
-                       = k - (T_L - target)^2 / (dJ/dk)
+    dJ/dt_l = [dJ/dk   * (k_l   - k_{l+1})
+             + dJ/drho * (rho_l - rho_{l+1})
+             + dJ/dcp  * (cp_l  - cp_{l+1})] * grad_at_boundary / dx
 
-    Inputs:
-        para: parameter series
-        max_iter: maximum optimization iterations
-        tol: convergence tolerance on loss
+    Returns: grad_t_layers (length n_layers)
+    """
+    k_layers = para['layerConductivities']
+    rho_layers = para['layerDensities']
+    cp_layers = para['layerHeatCapacities']
+    t_layers = para['layerThicknesses']
+    npl = para['nodesPerLayer']
+    n_layers = len(k_layers)
+
+    grad_k = adjoint_result['grad_k']
+    grad_rho = adjoint_result['grad_rho']
+    grad_cp = adjoint_result['grad_cp']
+    dx_arr = para['dx_array']
+
+    grad_t = np.zeros(n_layers)
+    for l in range(n_layers - 1):
+        # With layered grid, boundary between layer l and l+1 is at a known node
+        bnd_node = (l + 1) * (npl - 1)
+        # dx at the boundary (average of both sides)
+        dx_local = 0.5 * (dx_arr[bnd_node - 1] + dx_arr[bnd_node])
+
+        sensitivity = (
+            (k_layers[l]   - k_layers[l+1])   * grad_k[bnd_node]
+          + (rho_layers[l] - rho_layers[l+1]) * grad_rho[bnd_node]
+          + (cp_layers[l]  - cp_layers[l+1])  * grad_cp[bnd_node]
+        ) / dx_local
+
+        grad_t[l] += sensitivity
+        grad_t[l + 1] -= sensitivity
+
+    return grad_t
+
+
+def optimize_layered(para, max_iter=200, tol=1.0):
+    """ Gradient descent optimizer for layered TPS.
+
+    Optimizes layer thicknesses using adjoint gradients + chain rule.
+    Material properties (k, rho, cp) per layer are fixed.
 
     Return: optimized parameter series, history list
     """
-
     target = para['back_wall_temperature_target']
-    k = para['conductivity']
+    k_layers = para['layerConductivities'].copy()
+    t_layers = para['layerThicknesses'].copy()
+    L = para['length']
+    n_layers = len(k_layers)
+    t_min = L * 0.01
+
     history = []
-    k_prev = None
-    T_L_prev = None
 
     print('='*70)
-    print(' Optimization: find k so that T_L(t_final) = {:.1f} K'.format(target))
-    print(' Initial k = {:.4f} W/(m*K)'.format(k))
+    print(' Layered TPS Optimization: {} layers'.format(n_layers))
+    print(' Target T_L = {:.1f} K'.format(target))
+    print(' Fixed k_layers:', k_layers)
+    print(' Initial t_layers:', t_layers)
     print('='*70)
-    print(' {:>4s}  {:>12s}  {:>10s}  {:>12s}  {:>12s}'.format(
-          'Iter', 'k', 'T_L', 'Loss', 'dT_L/dk'))
+    print(' {:>4s}  {:>10s}  {:>12s}  {:>12s}  {:>30s}'.format(
+          'Iter', 'T_L', 'Loss', '|grad_t|', 't_layers'))
     print('-'*70)
 
     for iteration in range(1, max_iter + 1):
-        # Update conductivity in parameters
-        para['conductivity'] = k
+        para['layerThicknesses'] = t_layers
+        para['material function'] = 'layered'
 
-        # Forward solve (silent)
+        # Forward solve
         _, cache = hc.solve(para, verbose=False)
-
-        # Back-wall temperature at final time
         T_L = cache['TProfile'][-1, -1]
         loss = 0.5 * (T_L - target)**2
 
-        # Estimate dT_L/dk:
-        #   Iter 1: use adjoint gradient (local linearization)
-        #   Iter 2+: use secant method (actual finite difference)
-        if k_prev is not None and abs(k - k_prev) > 1e-12:
-            dTL_dk = (T_L - T_L_prev) / (k - k_prev)
-        else:
-            grad_k, _ = diff.main(para, cache, verbose=False)
-            dTL_dk = grad_k / (T_L - target)
+        # Adjoint → per-node gradients for k, rho, cp
+        adjoint_result = diff.main(para, cache, verbose=False)
+
+        # Chain rule → thickness gradient
+        grad_t = chain_rule(adjoint_result, para)
+        grad_norm = np.linalg.norm(grad_t)
 
         # Log
-        history.append({'iter': iteration, 'k': k,
-                        'T_L': T_L, 'loss': loss, 'dTL_dk': dTL_dk})
-        print(' {:4d}  {:12.4f}  {:10.2f}  {:12.4E}  {:12.4E}'.format(
-              iteration, k, T_L, loss, dTL_dk))
+        history.append({
+            'iter': iteration, 'T_L': T_L, 'loss': loss,
+            'grad_norm': grad_norm, 't_layers': t_layers.copy()
+        })
+        t_str = np.array2string(t_layers*1000, precision=3, separator=',')
+        print(' {:4d}  {:10.2f}  {:12.4E}  {:12.4E}  {:>30s}'.format(
+              iteration, T_L, loss, grad_norm, t_str + ' mm'))
 
-        # Check convergence
         if loss < tol:
             print('-'*70)
             print(' Converged! Loss {:.4E} < tol {:.4E}'.format(loss, tol))
             break
 
-        # Store previous values for secant
-        k_prev = k
-        T_L_prev = T_L
-
-        # Newton/secant step: k_new = k - (T_L - target) / (dT_L/dk)
-        k = k - (T_L - target) / dTL_dk
-
-        # Safety: keep k positive
-        if k <= 0:
-            k = 1e-3
-            print(' Warning: k clamped to {:.4f}'.format(k))
+        # Gradient descent: step size adapts with loss
+        # Large steps early (5% of L), shrinking as loss decreases
+        max_step = 0.05 * L * min(1.0, loss / 1000.0)
+        max_step = max(max_step, 0.001 * L)  # floor at 0.1%
+        step = grad_t / (grad_norm + 1e-30) * max_step
+        t_layers = t_layers - step
+        t_layers = np.maximum(t_layers, t_min)
+        t_layers = t_layers * L / t_layers.sum()
 
     print('='*70)
-    print(' Optimized k = {:.6f} W/(m*K)'.format(k))
-    print(' Final T_L   = {:.4f} K  (target = {:.1f} K)'.format(T_L, target))
+    print(' Fixed k_layers:', k_layers)
+    print(' Optimized t_layers (mm):', t_layers*1000)
+    print(' Final T_L = {:.4f} K  (target = {:.1f} K)'.format(T_L, target))
     print('='*70)
 
-    para['conductivity'] = k
+    para['layerThicknesses'] = t_layers
     return para, history
 
 
@@ -104,24 +142,16 @@ if __name__ == "__main__":
     outputDir = para['output']
     os.makedirs(outputDir, exist_ok=True)
 
-    # Run optimizer
-    para, history = optimize(para)
+    para, history = optimize_layered(para)
 
-    # Final forward solve with optimized k for postprocessing
+    # Final forward solve for postprocessing
     results, cache = hc.solve(para)
     T = pp.preprocess(para, results)
     T.to_csv(os.path.join(outputDir, 'solutionHistory_optimized.csv'))
 
-    # Save optimization history
     import pandas as pd
     df_hist = pd.DataFrame(history)
     df_hist.to_csv(os.path.join(outputDir, 'optimizationHistory.csv'), index=False)
 
-    # Save figures
     pp.evolutionField(T, outputDir)
-    positions = [0, 0.002, 0.004, 0.006, 0.008, 0.01]
-    pp.thermalCouplePlot(T, positions, outputDir)
-    times = [0, 2, 4, 6, 8, 10]
-    pp.temperatureDistribution(T, times, outputDir)
-
     print('\nResults saved to:', outputDir)

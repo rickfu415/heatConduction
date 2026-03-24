@@ -13,76 +13,95 @@ import time
 
 def assemble(para, cache):
     """ Assemble linear system Jacobian * dx = F
-    
-    Process:
-        0. Obtain relevant informations
-        1. Loop over grid:
-            1.1 Deal with BC node at x=0
-            1.2 Deal with BC node at x=L
-            1.3 Deal with interior nodes
-            1.4 Obtain values on imaginary nodes (Ug1 and Ug2)
-                for two BCs
-            1.4 Assemble Jacobian (a diagonal matrix)
-        2. Calculate temperature gradient dT2
-        3. Assemble F
-    
+
+    Supports spatially varying conductivity k(x) as a per-node array.
+    Uses the divergence form: d/dx[k(x) * dT/dx] with arithmetic-mean
+    interface conductivities k_{i+1/2} = (k[i] + k[i+1]) / 2.
+
     Return: dictionary containing cache data
     """
-    
-    k = para['conductivity']
-    rho = para['density']
-    hcp = para['heatCapacity']
+
+    k = para['conductivity']      # numpy array of length numberOfNode
+    rho = para['density']          # numpy array of length numberOfNode
+    hcp = para['heatCapacity']     # numpy array of length numberOfNode
     dt = para['deltaTime']
-    length = para['length']
     numberOfNode = para['numberOfNode']
-    
-    alpha = k / rho / hcp
-    dx = length / (numberOfNode -1)
-    
+    dx_arr = para['dx_array']      # non-uniform grid spacing (length N-1)
+
     # BC informations
     typeX0 = para['x=0 type']
     valueX0 = para['x=0 value']
     typeXL = para['x=L type']
     valueXL = para['x=L value']
-    
+
     # Containers
     T = cache['T']; T0 = cache['T0']
     F = cache['F']; Jacobian = cache['Jacobian']
-    
-    # Calculate analytic jacobian element
-    temp1 = 1 + 2 * alpha * dt / (dx**2)
-    temp2 = - alpha * dt / (dx**2)
-    
-    # Loop over grid
-    for i in range(0, numberOfNode):
-        # BC node at x=0
+
+    # Precompute interface conductivities and spacings
+    k_half = np.zeros(numberOfNode + 1)
+    dx_half = np.zeros(numberOfNode + 1)  # spacing at each interface
+    for i in range(numberOfNode - 1):
+        k_half[i + 1] = 0.5 * (k[i] + k[i + 1])
+        dx_half[i + 1] = dx_arr[i]
+    # Ghost interfaces mirror boundary
+    k_half[0] = k[0];                dx_half[0] = dx_arr[0]
+    k_half[numberOfNode] = k[-1];    dx_half[numberOfNode] = dx_arr[-1]
+
+    # Boundary ghost values for temperature
+    dx0 = dx_arr[0]
+    dxN = dx_arr[-1]
+    if typeX0 == 'heatFlux':
+        Ug1 = utility.fixedGradient(valueX0, k[0], dx0, T[1])
+    elif typeX0 == 'fixedTemperature':
+        Ug1 = utility.fixedValue(valueX0, T[1])
+
+    if typeXL == 'heatFlux':
+        Ug2 = utility.fixedGradient(valueXL, k[-1], dxN, T[-2])
+    elif typeXL == 'fixedTemperature':
+        Ug2 = utility.fixedValue(valueXL, T[-2])
+
+    # Assemble Jacobian node by node, store ce/cw for adjoint reuse
+    ce_arr = np.zeros(numberOfNode)
+    cw_arr = np.zeros(numberOfNode)
+    for i in range(numberOfNode):
+        k_east = k_half[i + 1]
+        k_west = k_half[i]
+        dx_e = dx_half[i + 1]
+        dx_w = dx_half[i]
+        h_i = 0.5 * (dx_w + dx_e)
+
+        ce = dt / (rho[i] * hcp[i] * h_i * dx_e)
+        cw = dt / (rho[i] * hcp[i] * h_i * dx_w)
+        ce_arr[i] = ce
+        cw_arr[i] = cw
+
+        # Diagonal
+        Jacobian[i][i] = 1 + ce * k_east + cw * k_west
+
         if i == 0:
             if typeX0 == 'heatFlux':
-                Ug1 = utility.fixedGradient(valueX0, k, dx, T[1])
-                Jacobian[0][1] = temp2 * 2
+                # Ghost Ug1 depends on T[1], so west+east both contribute to off-diag
+                Jacobian[0][1] = -(ce * k_east + cw * k_west)
             elif typeX0 == 'fixedTemperature':
-                Ug1 = utility.fixedValue(valueX0, T[1])
-                Jacobian[0][1] = 0
-        # BC node at x=L
-        elif i == numberOfNode-1:
+                Jacobian[0][1] = -ce * k_east + cw * k_west
+        elif i == numberOfNode - 1:
             if typeXL == 'heatFlux':
-                Ug2 = utility.fixedGradient(valueXL, k, dx, T[-2])
-                Jacobian[-1][-2] = temp2 * 2
+                Jacobian[-1][-2] = -(ce * k_east + cw * k_west)
             elif typeXL == 'fixedTemperature':
-                Ug2 = utility.fixedValue(valueXL, T[-2])
-                Jacobian[-1][-2] = 0
-        # Interior nodes
+                Jacobian[-1][-2] = ce * k_east - cw * k_west
         else:
-            Jacobian[i][i+1] = temp2
-            Jacobian[i][i-1] = temp2
-        Jacobian[i][i] = temp1
-    
-    # Calculate F (right hand side vector)
-    d2T = utility.secondOrder(T, dx, Ug1, Ug2)
-    F = T - T0 - alpha * dt * d2T # Vectorization
-    
-    # Store in cache
+            Jacobian[i][i + 1] = -ce * k_east
+            Jacobian[i][i - 1] = -cw * k_west
+
+    # Calculate F using variable-coefficient diffusion with non-uniform grid
+    diffusion = utility.variableCoefficientDiffusion(T, k, dx_arr, Ug1, Ug2)
+    rho_cp = (rho * hcp).reshape(-1, 1)
+    F = T - T0 - dt / rho_cp * diffusion
+
+    # Store in cache (ce/cw arrays used by adjoint for grad_k)
     cache['F'] = -F; cache['Jacobian'] = Jacobian
+    cache['ce_arr'] = ce_arr; cache['cw_arr'] = cw_arr
     return cache
 
 
@@ -208,6 +227,7 @@ def solve(para, verbose=True):
     if verbose:
         print(" Heat Conduction Solver")
     start = time.time()
+    para = parameter.normalize_conductivity(para)
     cache = initialize(para)
     numOfTimeStep = para['numberOfTimeStep']
     if verbose:
