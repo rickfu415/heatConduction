@@ -62,8 +62,7 @@ def assemble(para, cache):
     if reradiate:
         if typeX0 == 'heatFlux':
             qX0 = valueX0 - eps_r * sigma * (T[0, 0]**4 - T_amb**4)
-        if typeXL == 'heatFlux':
-            qXL = valueXL - eps_r * sigma * (T[-1, 0]**4 - T_amb**4)
+        # Re-radiation only at x=0 (outer surface); inner wall has no space to re-radiate
 
     # Boundary ghost values for temperature
     if typeX0 == 'heatFlux':
@@ -117,11 +116,7 @@ def assemble(para, cache):
             rad_jac_0 = dt / (rho[0]*hcp[0]) * 2.0 / h_0 * eps_r * sigma * 4 * T[0, 0]**3
             Jacobian[0][0] += rad_jac_0
             Jacobian[0][1] -= rad_jac_0  # ghost depends on T[1] for heatFlux BC
-        if typeXL == 'heatFlux':
-            h_N = 0.5 * (dx_half[-2] + dx_half[-1])
-            rad_jac_N = dt / (rho[-1]*hcp[-1]) * 2.0 / h_N * eps_r * sigma * 4 * T[-1, 0]**3
-            Jacobian[-1][-1] += rad_jac_N
-            Jacobian[-1][-2] -= rad_jac_N
+        # Re-radiation Jacobian only at x=0; inner wall (x=L) does not re-radiate
 
     # Calculate F using variable-coefficient diffusion with non-uniform grid
     diffusion = utility.variableCoefficientDiffusion(T, k, dx_arr, Ug1, Ug2)

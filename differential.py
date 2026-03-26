@@ -79,11 +79,6 @@ def main(para, cache, verbose=True):
             rad0 = dt / (rho[0]*hcp[0]) * 2.0/h_0 * eps_r*sigma*4*T_last[0]**3
             M_base[0, 0] -= rad0
             M_base[0, 1] += rad0
-        if typeXL == 'heatFlux':
-            h_N = 0.5 * (dx_arr[-1] + dx_arr[-1])
-            radN = dt / (rho[-1]*hcp[-1]) * 2.0/h_N * eps_r*sigma*4*T_last[-1]**3
-            M_base[-1, -1] -= radN
-            M_base[-1, -2] += radN
 
     # Reverse time loop
     reversedtimeSteps = timeSteps[::-1]
@@ -100,11 +95,6 @@ def main(para, cache, verbose=True):
                 rad0 = dt / (rho[0]*hcp[0]) * 2.0/h_0 * eps_r*sigma*4*T_n[0]**3
                 M[0, 0] += rad0
                 M[0, 1] -= rad0
-            if typeXL == 'heatFlux':
-                h_N = 0.5 * (dx_arr[-1] + dx_arr[-1])
-                radN = dt / (rho[-1]*hcp[-1]) * 2.0/h_N * eps_r*sigma*4*T_n[-1]**3
-                M[-1, -1] += radN
-                M[-1, -2] -= radN
             MT = M.T
         else:
             MT = M_base.T
