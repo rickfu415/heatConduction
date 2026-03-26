@@ -94,7 +94,7 @@ def optimize_layered(para, max_iter=200, tol=1.0):
 
         # Forward solve
         _, cache = hc.solve(para, verbose=False)
-        T_L = cache['TProfile'][-1, -1]
+        T_L = np.max(cache['TProfile'][-1, :])  # max backwall T over time
         loss = 0.5 * (T_L - target)**2
 
         # Adjoint → per-node gradients for k, rho, cp

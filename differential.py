@@ -14,11 +14,11 @@ def main(para, cache, verbose=True):
     """ Adjoint calculation for spatially varying properties.
 
     Computes per-node gradients: dJ/dk, dJ/drho, dJ/dcp.
-    The loss is J = 0.5 * (T_L(t_final) - target)^2.
+    The loss is J = 0.5 * (max_t T_L(t) - target)^2.
 
     Derivation:
         dJ/dp_j = -sum_{n=1}^{N} (w^n)^T * (dM/dp_j) * T^n
-        where w^N = M^{-T} * dJ/dT^N, w^{n-1} = M^{-T} * w^n
+        The adjoint source is injected at t* = argmax_t T_L(t).
 
         dM/dk_j affects rows j-1, j, j+1 (interface conductivities)
         dM/drho_j and dM/dcp_j affect only row j:
@@ -45,10 +45,12 @@ def main(para, cache, verbose=True):
     grad_rho = np.zeros(n_grid)
     grad_cp = np.zeros(n_grid)
 
-    # Terminal condition: dJ/dT^N
-    T_final = cache['TProfile'][:, -1]
-    loss = 0.5 * (T_final[-1] - target_temperature)**2
-    lambda_current[-1] = T_final[-1] - target_temperature
+    # Loss based on max backwall T over all timesteps
+    T_backwall = cache['TProfile'][-1, :]
+    t_star = np.argmax(T_backwall)
+    T_max_bw = T_backwall[t_star]
+    loss = 0.5 * (T_max_bw - target_temperature)**2
+    # Adjoint source injected at t_star inside the backward loop (not terminal)
 
     # Properties (per-node arrays)
     rho = para['density']
@@ -86,6 +88,10 @@ def main(para, cache, verbose=True):
         print(' [Step]  [T_L]      [lambda_L]   [|grad_k|]')
     for ts in reversedtimeSteps:
         T_n = cache['TProfile'][:, ts]
+
+        # Inject adjoint source at the timestep where backwall T is max
+        if ts == t_star:
+            lambda_current[-1] += (T_max_bw - target_temperature)
 
         # Rebuild M at this timestep (add re-radiation evaluated at T_n)
         if reradiate:
@@ -132,7 +138,6 @@ def main(para, cache, verbose=True):
         v0_r1 = cw[1]/2 * T_n[1] - cw[1]/2 * T_n[0]
         grad_k[0] -= lam[0] * v0_r0 + lam[1] * v0_r1
         # Boundary j=N-1: ghost interface dk/dk_{N-1} = 1, west dk = 1/2
-        N = n_grid
         if typeXL == 'heatFlux':
             vN_rN = (ce[-1] + cw[-1]/2)*T_n[-1] - (ce[-1] + cw[-1]/2)*T_n[-2]
         elif typeXL == 'fixedTemperature':
