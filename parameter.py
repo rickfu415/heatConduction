@@ -61,10 +61,10 @@ def main():
     df.at['nodesPerLayer'] = 21  # nodes in each layer (including shared boundaries)
     
     # Solution
-    df.at['numberOfTimeStep'] = 600#400
-    df.at['deltaTime'] = 0.02
-    df.at['maxIteration'] = 100
-    df.at['convergence'] = 1E-9
+    df.at['duration'] = 300.0          # total simulation time (s)
+    df.at['CFL'] = 3.0               # dt based on slowest layer's dx^2/(2*alpha); limited by re-radiation Newton convergence
+    df.at['maxIteration'] = 50
+    df.at['convergence'] = 1E-7
     df.at['relaxation'] = 0.9 # value in [0-1] Very sensitive!!!
     
     # Environment
@@ -87,6 +87,7 @@ def main():
 
     # Optimizer
     df.at['learning_rate'] = 1e-9  # thickness gradients are O(1e5), thicknesses O(1e-3)
+    df.at['print_frequency'] = 10   # screen output every N optimizer iterations
     return df
 
 
@@ -186,6 +187,36 @@ def normalize_conductivity(para):
             para['heatCapacity'] = np.full(N, cp)
         dx = para['length'] / (N - 1)
         para['dx_array'] = np.full(N - 1, dx)
+
+    # Adaptive time step based on per-layer diffusion timescale.
+    # For each layer: dt_layer = CFL * dx_layer^2 / (2 * alpha_layer)
+    # Use the minimum dt across layers (most restrictive for accuracy).
+    cfl = para.get('CFL', 5.0)
+    if para['material function'] == 'layered':
+        k_layers = para['layerConductivities']
+        rho_layers = para['layerDensities']
+        cp_layers = para['layerHeatCapacities']
+        t_layers = para['layerThicknesses']
+        npl = para['nodesPerLayer']
+        dt_candidates = []
+        for l in range(len(k_layers)):
+            dx_l = t_layers[l] / (npl - 1)
+            alpha_l = k_layers[l] / (rho_layers[l] * cp_layers[l])
+            dt_candidates.append(cfl * dx_l**2 / (2.0 * alpha_l))
+        dt = max(dt_candidates)
+    else:
+        dx_arr = para['dx_array']
+        k_arr = para['conductivity']
+        rho_arr = para['density']
+        cp_arr = para['heatCapacity']
+        alpha_max = np.max(k_arr / (rho_arr * cp_arr))
+        dx_min = dx_arr.min()
+        dt = cfl * dx_min**2 / (2.0 * alpha_max)
+    duration = para['duration']
+    dt = min(dt, duration / 200.0)  # at least 200 steps for transient resolution
+    num_steps = max(1, int(np.ceil(duration / dt)))
+    para['deltaTime'] = duration / num_steps
+    para['numberOfTimeStep'] = num_steps
     return para
 
 
