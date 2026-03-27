@@ -77,7 +77,9 @@ def temperatureDistribution(results, times, outputDir=None):
            time steps
     """
 
-    df = results.loc[:,times]
+    # Use nearest-match lookup (adaptive dt may not hit exact requested times)
+    col_idx = [results.columns[np.argmin(np.abs(results.columns - t))] for t in times]
+    df = results.loc[:, col_idx]
     df = df.add_prefix('t = ')
     df = df.add_suffix(' s')
     ax = df.plot(grid=True)

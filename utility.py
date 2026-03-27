@@ -65,52 +65,51 @@ def secondOrder(U, dx, Ug1, Ug2):
 def variableCoefficientDiffusion(U, k, dx_arr, Ug1, Ug2):
     """ Compute d/dx[k(x) * dU/dx] with variable conductivity and non-uniform grid.
 
+    Vectorized implementation — no Python loops.
+
     dx_arr: array of length N-1, dx_arr[i] = distance from node i to node i+1.
     Ghost spacing mirrors the adjacent interior spacing.
 
     Uses arithmetic-mean interface conductivities:
         k_{i+1/2} = (k[i] + k[i+1]) / 2
 
-    At node i, the control volume has width h_i = (dx_west + dx_east) / 2,
-    and the flux balance gives:
-        D_i = [k_east*(U_{i+1}-U_i)/dx_east - k_west*(U_i-U_{i-1})/dx_west] / h_i
-
     Return: numpy array (N, 1)
     """
-    N = U.size
-    D = np.zeros((N, 1))
-    for i in range(N):
-        # East interface
-        if i < N - 1:
-            k_east = 0.5 * (k[i] + k[i + 1])
-            dx_east = dx_arr[i]
-        else:
-            k_east = k[i]
-            dx_east = dx_arr[-1]  # ghost mirror
+    Uf = U.ravel()
+    N = Uf.size
 
-        # West interface
-        if i > 0:
-            k_west = 0.5 * (k[i - 1] + k[i])
-            dx_west = dx_arr[i - 1]
-        else:
-            k_west = k[i]
-            dx_west = dx_arr[0]  # ghost mirror
+    # Interface conductivities: k_{i+1/2} for i=0..N-2, plus ghost interfaces
+    k_east = np.empty(N)
+    k_east[:-1] = 0.5 * (k[:-1] + k[1:])
+    k_east[-1] = k[-1]  # ghost
 
-        # Temperature neighbors
-        if i == 0:
-            U_west = Ug1
-            U_east = U[1]
-        elif i == N - 1:
-            U_west = U[i - 1]
-            U_east = Ug2
-        else:
-            U_west = U[i - 1]
-            U_east = U[i + 1]
+    k_west = np.empty(N)
+    k_west[1:] = 0.5 * (k[:-1] + k[1:])
+    k_west[0] = k[0]  # ghost
 
-        h_i = 0.5 * (dx_west + dx_east)
-        flux_east = k_east * (U_east - U[i]) / dx_east
-        flux_west = k_west * (U[i] - U_west) / dx_west
-        D[i] = (flux_east - flux_west) / h_i
+    # Interface spacings
+    dx_east = np.empty(N)
+    dx_east[:-1] = dx_arr
+    dx_east[-1] = dx_arr[-1]  # ghost mirror
+
+    dx_west = np.empty(N)
+    dx_west[1:] = dx_arr
+    dx_west[0] = dx_arr[0]  # ghost mirror
+
+    # Neighbor temperatures (with ghost values at boundaries)
+    U_east = np.empty(N)
+    U_east[:-1] = Uf[1:]
+    U_east[-1] = Ug2
+
+    U_west = np.empty(N)
+    U_west[1:] = Uf[:-1]
+    U_west[0] = Ug1
+
+    # Flux balance
+    h = 0.5 * (dx_west + dx_east)
+    flux_east = k_east * (U_east - Uf) / dx_east
+    flux_west = k_west * (Uf - U_west) / dx_west
+    D = ((flux_east - flux_west) / h).reshape(-1, 1)
     return D
 
 

@@ -61,20 +61,40 @@ def chain_rule(adjoint_result, para):
     return grad_t
 
 
-def optimize_layered(para, max_iter=200, tol=1.0):
+def optimize_layered(para, max_iter=200, tol=1.0, callback=None):
     """ Gradient descent optimizer for layered TPS.
 
     Optimizes layer thicknesses using adjoint gradients + chain rule.
     Material properties (k, rho, cp) per layer are fixed.
+    Total thickness is free to change to meet the back wall T target.
 
     Return: optimized parameter series, history list
     """
     target = para['back_wall_temperature_target']
     k_layers = para['layerConductivities'].copy()
     t_layers = para['layerThicknesses'].copy()
-    L = para['length']
+    lr = para.get('learning_rate', 1e-9)
     n_layers = len(k_layers)
-    t_min = L * 0.01
+    t_min = max(1e-5, 0.01 * t_layers.min())
+
+    # Edge case: check if redistribution alone can meet target.
+    # Best redistribution: maximize insulator thickness, minimize others at t_min.
+    best_insulator = np.argmin(k_layers)
+    t_check = np.full(n_layers, t_min)
+    t_check[best_insulator] = t_layers.sum() - t_min * (n_layers - 1)
+    para_check = para.copy()
+    para_check['layerThicknesses'] = t_check
+    para_check['length'] = float(t_check.sum())
+    para_check['material function'] = 'layered'
+    _, cache_check = hc.solve(para_check, verbose=False)
+    T_best = np.max(cache_check['TProfile'][-1, :])
+    needs_growth = T_best > target
+    print(' Best redistribution check: max T_L = {:.1f} K (layer {} at {:.3f}mm, others at t_min)'.format(
+          T_best, best_insulator, t_check[best_insulator]*1000))
+    if needs_growth:
+        print(' -> Current total thickness insufficient, allowing growth')
+    else:
+        print(' -> Redistribution sufficient, keeping total thickness constant')
 
     history = []
 
@@ -100,8 +120,19 @@ def optimize_layered(para, max_iter=200, tol=1.0):
         # Adjoint → per-node gradients for k, rho, cp
         adjoint_result = diff.main(para, cache, verbose=False)
 
-        # Chain rule → thickness gradient
+        # Chain rule → thickness gradient (redistribution only, sums to ~0)
         grad_t = chain_rule(adjoint_result, para)
+        # When growth is needed and T_L exceeds target, add a uniform growth
+        # component proportional to each layer's insulating value (1/k).
+        # This breaks the zero-sum symmetry so total thickness can increase.
+        # Once T_L drops below target, disable growth permanently (sufficient thickness reached).
+        if needs_growth and T_L <= target:
+            needs_growth = False
+            print(' -> Thickness now sufficient, switching to redistribution only')
+        if needs_growth:
+            growth_dir = (1.0 / k_layers)
+            growth_dir = growth_dir / np.linalg.norm(growth_dir)
+            grad_t -= growth_dir * (T_L - target) * np.linalg.norm(grad_t)
         grad_norm = np.linalg.norm(grad_t)
 
         # Log
@@ -113,19 +144,31 @@ def optimize_layered(para, max_iter=200, tol=1.0):
         print(' {:4d}  {:10.2f}  {:12.4E}  {:12.4E}  {:>30s}'.format(
               iteration, T_L, loss, grad_norm, t_str + ' mm'))
 
+        if callback is not None:
+            callback({
+                'iter': iteration, 'T_L': float(T_L), 'loss': float(loss),
+                'grad_norm': float(grad_norm),
+                't_layers': t_layers.copy().tolist(),
+                'total_thickness': float(t_layers.sum()),
+            })
+
         if loss < tol:
             print('-'*70)
             print(' Converged! Loss {:.4E} < tol {:.4E}'.format(loss, tol))
             break
 
-        # Gradient descent: step size adapts with loss
-        # Large steps early (5% of L), shrinking as loss decreases
-        max_step = 0.05 * L * min(1.0, loss / 1000.0)
-        max_step = max(max_step, 0.001 * L)  # floor at 0.1%
-        step = grad_t / (grad_norm + 1e-30) * max_step
-        t_layers = t_layers - step
-        t_layers = np.maximum(t_layers, t_min)
-        t_layers = t_layers * L / t_layers.sum()
+        # Gradient descent with fixed learning rate
+        step = lr * grad_t
+        # Limit step: no layer can change by more than 50% per iteration
+        max_step = 0.5 * t_layers
+        step = np.clip(step, -max_step, max_step)
+        t_new = t_layers - step
+        t_new = np.maximum(t_new, t_min)
+        # If thickness is already sufficient, only redistribute (keep total constant)
+        if not needs_growth:
+            t_new = t_new * t_layers.sum() / t_new.sum()
+        t_layers = t_new
+        para['length'] = float(t_layers.sum())
 
     print('='*70)
     print(' Fixed k_layers:', k_layers)
@@ -134,6 +177,7 @@ def optimize_layered(para, max_iter=200, tol=1.0):
     print('='*70)
 
     para['layerThicknesses'] = t_layers
+    para['length'] = float(t_layers.sum())
     return para, history
 
 
