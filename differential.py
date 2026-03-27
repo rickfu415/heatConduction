@@ -7,6 +7,7 @@ import postprocessing as pp
 import heatConduction as hc
 import pandas as pd
 import numpy as np
+from scipy.linalg import solve_banded
 import os
 import parameter as parameter
 
@@ -30,17 +31,15 @@ def main(para, cache, verbose=True):
     if verbose:
         print("Start Adjoint Calculation")
     target_temperature = para['back_wall_temperature_target']
-    log = cache['Log']
     n_grid = cache['TProfile'][:, -1].size
+    num_steps = para['numberOfTimeStep']
     if verbose:
         print('Size of grid: ', n_grid)
-    timeSteps = log.index
-    if verbose:
-        print('Time steps: ', len(timeSteps))
+        print('Time steps: ', num_steps)
 
     # Variables
     lambda_current = np.zeros(n_grid)
-    lambda_profile = np.zeros((len(timeSteps), n_grid))
+    lambda_profile = np.zeros((num_steps, n_grid))
     grad_k = np.zeros(n_grid)
     grad_rho = np.zeros(n_grid)
     grad_cp = np.zeros(n_grid)
@@ -83,10 +82,9 @@ def main(para, cache, verbose=True):
             M_base[0, 1] += rad0
 
     # Reverse time loop
-    reversedtimeSteps = timeSteps[::-1]
     if verbose:
         print(' [Step]  [T_L]      [lambda_L]   [|grad_k|]')
-    for ts in reversedtimeSteps:
+    for ts in range(num_steps, 0, -1):
         T_n = cache['TProfile'][:, ts]
 
         # Inject adjoint source at the timestep where backwall T is max
@@ -105,8 +103,13 @@ def main(para, cache, verbose=True):
         else:
             MT = M_base.T
 
-        # Backward propagation: solve M^T * w = lambda
-        lambda_current = np.linalg.solve(MT, lambda_current)
+        # Backward propagation: solve M^T * w = lambda (tridiagonal banded)
+        N = MT.shape[0]
+        ab = np.zeros((3, N))
+        ab[0, 1:] = np.diag(MT, 1)
+        ab[1, :]  = np.diag(MT, 0)
+        ab[2, :-1] = np.diag(MT, -1)
+        lambda_current = solve_banded((1, 1), ab, lambda_current)
         lam = lambda_current
         lambda_profile[ts-1, :] = lambda_current
 
