@@ -16,8 +16,8 @@ def fixedValue(value, U2):
     Return: float
     """
     
-    Ug = 2 * value - U2 
-    return Ug
+    Ug = 2 * value - U2
+    return float(np.asarray(Ug).flat[0])
 
 
 
@@ -30,8 +30,8 @@ def fixedGradient(q, k, dx, U1):
     Return: float
     """
     
-    Ug =  q / k * 2 * dx  + U1
-    return Ug
+    Ug = q / k * 2 * dx + U1
+    return float(np.asarray(Ug).flat[0])
 
 
 

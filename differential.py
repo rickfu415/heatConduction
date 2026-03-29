@@ -11,15 +11,21 @@ from scipy.linalg import solve_banded
 import os
 import parameter as parameter
 
-def main(para, cache, verbose=True):
+def main(para, cache, verbose=True, obs_node=None, seed_value=None):
     """ Adjoint calculation for spatially varying properties.
 
     Computes per-node gradients: dJ/dk, dJ/drho, dJ/dcp.
-    The loss is J = 0.5 * (max_t T_L(t) - target)^2.
+
+    Default mode (obs_node=None, seed_value=None):
+        Loss is J = 0.5 * (max_t T_L(t) - target)^2 at the backwall node.
+
+    Sensitivity mode (obs_node=int, seed_value=1.0):
+        Seeds the adjoint at an arbitrary node with a fixed value, giving
+        dT_obs_max/d{k,rho,cp} directly (useful for constraint Jacobians).
 
     Derivation:
         dJ/dp_j = -sum_{n=1}^{N} (w^n)^T * (dM/dp_j) * T^n
-        The adjoint source is injected at t* = argmax_t T_L(t).
+        The adjoint source is injected at t* = argmax_t T_obs(t).
 
         dM/dk_j affects rows j-1, j, j+1 (interface conductivities)
         dM/drho_j and dM/dcp_j affect only row j:
@@ -44,11 +50,17 @@ def main(para, cache, verbose=True):
     grad_rho = np.zeros(n_grid)
     grad_cp = np.zeros(n_grid)
 
-    # Loss based on max backwall T over all timesteps
-    T_backwall = cache['TProfile'][-1, :]
-    t_star = np.argmax(T_backwall)
-    T_max_bw = T_backwall[t_star]
-    loss = 0.5 * (T_max_bw - target_temperature)**2
+    # Determine observation node and adjoint seed
+    _obs = (n_grid - 1) if obs_node is None else int(obs_node)
+    T_obs = cache['TProfile'][_obs, :]
+    t_star = int(np.argmax(T_obs))
+    T_max_obs = float(T_obs[t_star])
+    if seed_value is None:
+        _seed = T_max_obs - target_temperature
+        loss = 0.5 * (T_max_obs - target_temperature) ** 2
+    else:
+        _seed = float(seed_value)
+        loss = None
     # Adjoint source injected at t_star inside the backward loop (not terminal)
 
     # Properties (per-node arrays)
@@ -87,9 +99,9 @@ def main(para, cache, verbose=True):
     for ts in range(num_steps, 0, -1):
         T_n = cache['TProfile'][:, ts]
 
-        # Inject adjoint source at the timestep where backwall T is max
+        # Inject adjoint source at the timestep where observed node T is max
         if ts == t_star:
-            lambda_current[-1] += (T_max_bw - target_temperature)
+            lambda_current[_obs] += _seed
 
         # Rebuild M at this timestep (add re-radiation evaluated at T_n)
         if reradiate:
@@ -160,12 +172,13 @@ def main(para, cache, verbose=True):
 
         if verbose:
             print(' [','{:3.0f}'.format(ts), ']',
-                  ' [','{:8.2f}'.format(T_n[-1]),']',
-                  ' [','{:10.4E}'.format(lambda_current[-1]),']',
+                  ' [','{:8.2f}'.format(T_n[_obs]),']',
+                  ' [','{:10.4E}'.format(lambda_current[_obs]),']',
                   ' [','{:10.4E}'.format(np.linalg.norm(grad_k)),']')
 
     if verbose:
-        print('\nFinal loss:     ', '{:.6E}'.format(loss))
+        loss_str = '{:.6E}'.format(loss) if loss is not None else 'N/A (sensitivity mode)'
+        print('\nFinal loss:     ', loss_str)
         print('|grad_k|:       ', '{:.6E}'.format(np.linalg.norm(grad_k)))
         print('|grad_rho|:     ', '{:.6E}'.format(np.linalg.norm(grad_rho)))
         print('|grad_cp|:      ', '{:.6E}'.format(np.linalg.norm(grad_cp)))

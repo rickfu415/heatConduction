@@ -138,10 +138,10 @@ def normalize_conductivity(para):
     For constant material: broadcasts scalar to array.
     """
     if para['material function'] == 'layered':
-        k_layers = para['layerConductivities']
-        rho_layers = para['layerDensities']
-        cp_layers = para['layerHeatCapacities']
-        t_layers = para['layerThicknesses']
+        k_layers = np.atleast_1d(np.asarray(para['layerConductivities'], dtype=float))
+        rho_layers = np.atleast_1d(np.asarray(para['layerDensities'], dtype=float))
+        cp_layers = np.atleast_1d(np.asarray(para['layerHeatCapacities'], dtype=float))
+        t_layers = np.atleast_1d(np.asarray(para['layerThicknesses'], dtype=float))
         n_layers = len(k_layers)
         npl = para['nodesPerLayer']
 
@@ -193,10 +193,10 @@ def normalize_conductivity(para):
     # Use the minimum dt across layers (most restrictive for accuracy).
     cfl = para.get('CFL', 5.0)
     if para['material function'] == 'layered':
-        k_layers = para['layerConductivities']
-        rho_layers = para['layerDensities']
-        cp_layers = para['layerHeatCapacities']
-        t_layers = para['layerThicknesses']
+        k_layers = np.atleast_1d(np.asarray(para['layerConductivities'], dtype=float))
+        rho_layers = np.atleast_1d(np.asarray(para['layerDensities'], dtype=float))
+        cp_layers = np.atleast_1d(np.asarray(para['layerHeatCapacities'], dtype=float))
+        t_layers = np.atleast_1d(np.asarray(para['layerThicknesses'], dtype=float))
         npl = para['nodesPerLayer']
         dt_candidates = []
         for l in range(len(k_layers)):
