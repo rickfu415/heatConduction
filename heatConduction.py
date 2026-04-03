@@ -35,12 +35,27 @@ def assemble(para, cache):
     typeXL = para['x=L type']
     valueXL = para['x=L value']
     reradiate = para.get('re-radiate', False)
+    reradiate_xL = para.get('re-radiate-xL', False)
+    convection = para.get('convection', False)
+    convection_xL = para.get('convection-xL', False)
+    plate_contact = para.get('plate-contact', False)
+    plate_contact_xL = para.get('plate-contact-xL', False)
 
     # Re-radiation parameters
-    if reradiate:
+    if reradiate or reradiate_xL:
         sigma = para['stefanBoltzmann']
         eps_r = para['emissivity']
         T_amb = para['ambientTemperature']
+
+    # Convection parameters
+    if convection or convection_xL:
+        h_conv = para['convection_coeff']
+        T_amb_conv = para['ambientTemperature']
+
+    # Plate contact parameters
+    if plate_contact or plate_contact_xL:
+        h_plate = para['plate_conductance']
+        T_plate = para.get('plate_temperature', para['ambientTemperature'])
 
     # Containers
     T = cache['T']; T0 = cache['T0']
@@ -55,12 +70,27 @@ def assemble(para, cache):
     k_half[0] = k[0];    dx_half[0] = dx_arr[0]
     k_half[N] = k[-1];   dx_half[N] = dx_arr[-1]
 
-    # Compute effective heat flux at boundaries (including re-radiation)
+    # Compute effective heat flux at boundaries (including re-radiation, convection, plate contact)
     qX0 = valueX0
     qXL = valueXL
     if reradiate:
         if typeX0 == 'heatFlux':
             qX0 = valueX0 - eps_r * sigma * (T[0, 0]**4 - T_amb**4)
+    if reradiate_xL:
+        if typeXL == 'heatFlux':
+            qXL = valueXL - eps_r * sigma * (T[-1, 0]**4 - T_amb**4)
+    if convection:
+        if typeX0 == 'heatFlux':
+            qX0 = qX0 - h_conv * (T[0, 0] - T_amb_conv)
+    if convection_xL:
+        if typeXL == 'heatFlux':
+            qXL = qXL - h_conv * (T[-1, 0] - T_amb_conv)
+    if plate_contact:
+        if typeX0 == 'heatFlux':
+            qX0 = qX0 - h_plate * (T[0, 0] - T_plate)
+    if plate_contact_xL:
+        if typeXL == 'heatFlux':
+            qXL = qXL - h_plate * (T[-1, 0] - T_plate)
 
     # Boundary ghost values for temperature
     if typeX0 == 'heatFlux':
@@ -108,6 +138,46 @@ def assemble(para, cache):
             rad_jac_0 = dt / (rho[0]*hcp[0]) * 2.0 / h_0 * eps_r * sigma * 4 * T[0, 0]**3
             diag[0] += rad_jac_0
             upper[0] -= rad_jac_0
+
+    # Re-radiation Jacobian correction at x=L
+    if reradiate_xL:
+        if typeXL == 'heatFlux':
+            h_L = 0.5 * (dx_half[N-1] + dx_half[N])
+            rad_jac_L = dt / (rho[-1]*hcp[-1]) * 2.0 / h_L * eps_r * sigma * 4 * T[-1, 0]**3
+            diag[-1] += rad_jac_L
+            lower[-1] -= rad_jac_L
+
+    # Convection Jacobian correction at x=0
+    if convection:
+        if typeX0 == 'heatFlux':
+            h_0 = 0.5 * (dx_half[0] + dx_half[1])
+            conv_jac_0 = dt / (rho[0]*hcp[0]) * 2.0 / h_0 * h_conv
+            diag[0] += conv_jac_0
+            upper[0] -= conv_jac_0
+
+    # Convection Jacobian correction at x=L
+    if convection_xL:
+        if typeXL == 'heatFlux':
+            h_L = 0.5 * (dx_half[N-1] + dx_half[N])
+            conv_jac_L = dt / (rho[-1]*hcp[-1]) * 2.0 / h_L * h_conv
+            diag[-1] += conv_jac_L
+            lower[-1] -= conv_jac_L
+
+    # Plate contact Jacobian correction at x=0
+    if plate_contact:
+        if typeX0 == 'heatFlux':
+            h_0 = 0.5 * (dx_half[0] + dx_half[1])
+            plate_jac_0 = dt / (rho[0]*hcp[0]) * 2.0 / h_0 * h_plate
+            diag[0] += plate_jac_0
+            upper[0] -= plate_jac_0
+
+    # Plate contact Jacobian correction at x=L
+    if plate_contact_xL:
+        if typeXL == 'heatFlux':
+            h_L = 0.5 * (dx_half[N-1] + dx_half[N])
+            plate_jac_L = dt / (rho[-1]*hcp[-1]) * 2.0 / h_L * h_plate
+            diag[-1] += plate_jac_L
+            lower[-1] -= plate_jac_L
 
     # Fill Jacobian matrix
     Jacobian[:] = 0
