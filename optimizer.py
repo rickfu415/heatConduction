@@ -202,7 +202,7 @@ def optimize_mass_slsqp(
     t0 = np.asarray(t0, dtype=float)
     n_layers = len(t0)
 
-    rho = np.asarray(para_base['layerDensities'], dtype=float)
+    rho = np.atleast_1d(np.asarray(para_base['layerDensities'], dtype=float))
     layer_service_temps = list(layer_service_temps)
     t_min_arr = np.broadcast_to(np.asarray(t_min, dtype=float), (n_layers,)).copy()
 

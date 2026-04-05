@@ -198,7 +198,7 @@ for n in [1, 2, 3]:
     # ── Initial state ────────────────────────────────────────────────────
     TProfile_init, _ = hc.solve(para, verbose=False)
     T_bw_init = float(np.max(TProfile_init[-1, :]))
-    rho = np.asarray(para['layerDensities'], dtype=float)
+    rho = np.atleast_1d(np.asarray(para['layerDensities'], dtype=float))
     mass_init = float(np.dot(rho, t_over))
     print(f'  Initial design:   t = {fmt_mm(t_over)} mm')
     print(f'                    mass = {mass_init:.3f} kg/m²')
