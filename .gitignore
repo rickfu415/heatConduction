@@ -106,3 +106,8 @@ venv.bak/
 
 # output
 results/
+
+# generated figures and data
+*.png
+*.csv
+applications/*/figures/

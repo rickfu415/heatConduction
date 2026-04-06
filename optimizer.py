@@ -69,7 +69,23 @@ def _rebuild_para(para_base, t):
     para['length'] = float(t.sum())
     para['material function'] = 'layered'
     parameter.normalize_conductivity(para)
+    # Clear any stale Q carried from a prior coupled solve; the fresh
+    # material coupler (if any) will repopulate in _maybe_build_hook.
+    if 'volumetricHeatSource' in para.index:
+        para['volumetricHeatSource'] = None
     return para
+
+
+def _maybe_build_hook(para):
+    """Build a LayeredMaterialCoupler hook if para['material_engine_yamls']
+    is set. Each call returns a fresh coupler → fresh material state, so
+    FD perturbations in compute_thermal_sensitivities start from IC."""
+    yamls = para.get('material_engine_yamls', None) if hasattr(para, 'get') else None
+    if yamls is None:
+        return None
+    from material_coupling import make_layered_coupler
+    coupler = make_layered_coupler(para, list(yamls))
+    return coupler.hook
 
 
 def _layer_node_ranges(para):
@@ -105,7 +121,7 @@ def compute_thermal_sensitivities(para, eps_frac=0.002):
     t_layers = np.atleast_1d(np.asarray(para['layerThicknesses'], dtype=float))
 
     # Base forward solve
-    TProfile, fwd_cache = hc.solve(para, verbose=False)
+    TProfile, fwd_cache = hc.solve(para, verbose=False, material_hook=_maybe_build_hook(para))
     T_bw_max = float(np.max(TProfile[-1, :]))
 
     # Per-layer: find the node that attains the highest temperature over all time
@@ -128,7 +144,8 @@ def compute_thermal_sensitivities(para, eps_frac=0.002):
         eps = max(1e-5, eps_frac * t_layers[j])
         t_pert = t_layers.copy()
         t_pert[j] += eps
-        TProfile_p, _ = hc.solve(_rebuild_para(para, t_pert), verbose=False)
+        para_p = _rebuild_para(para, t_pert)
+        TProfile_p, _ = hc.solve(para_p, verbose=False, material_hook=_maybe_build_hook(para_p))
         T_bw_p = float(np.max(TProfile_p[-1, :]))
         dT_bw_dt[j] = (T_bw_p - T_bw_max) / eps
         for i in range(n_layers):
@@ -211,14 +228,16 @@ def optimize_mass_slsqp(
     # large initial QP step that SLSQP would take from a deeply-feasible point,
     # which can cause it to overshoot into the infeasible region and then climb back
     # to a wrong (heavier) local solution.
-    _, _c0 = hc.solve(_rebuild_para(para_base, t0), verbose=False)
+    _p0 = _rebuild_para(para_base, t0)
+    _, _c0 = hc.solve(_p0, verbose=False, material_hook=_maybe_build_hook(_p0))
     _T_bw0 = float(np.max(_c0['TProfile'][-1, :]))
     if _T_bw0 < T_bw_limit - 10.0:
         _lo, _hi = 0.0, 1.0
         for _ in range(30):
             _mid = 0.5 * (_lo + _hi)
             _t_mid = np.maximum(_mid * t0, t_min_arr)
-            _, _c_mid = hc.solve(_rebuild_para(para_base, _t_mid), verbose=False)
+            _p_mid = _rebuild_para(para_base, _t_mid)
+            _, _c_mid = hc.solve(_p_mid, verbose=False, material_hook=_maybe_build_hook(_p_mid))
             _T_mid = float(np.max(_c_mid['TProfile'][-1, :]))
             if _T_mid < T_bw_limit:
                 _hi = _mid
@@ -226,7 +245,8 @@ def optimize_mass_slsqp(
                 _lo = _mid
         # _hi is smallest scale where T_bw < T_bw_limit; use it (feasible, near boundary)
         t0 = np.maximum(_hi * t0, t_min_arr)
-        _, _c_new = hc.solve(_rebuild_para(para_base, t0), verbose=False)
+        _p_new = _rebuild_para(para_base, t0)
+        _, _c_new = hc.solve(_p_new, verbose=False, material_hook=_maybe_build_hook(_p_new))
         _T_new = float(np.max(_c_new['TProfile'][-1, :]))
         print(' Auto-init: t0 → {} mm  (T_bw: {:.1f}→{:.1f} K)'.format(
               (t0*1000).round(2).tolist(), _T_bw0, _T_new))

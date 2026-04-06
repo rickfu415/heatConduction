@@ -1,44 +1,39 @@
 """
-run_all_cases.py — comprehensive demonstration of all solver capabilities.
+run_coupled_all_cases.py — run_all_cases with MaterialEngine coupling ON.
 
-Cases:
-  A. Forward solve only         (1, 2, 3 layers)
-  B. optimize_layered           (1, 2, 3 layers)  — hit T_bw target, adjoint gradient descent
-  C. optimize_mass_slsqp        (1, 2, 3 layers)  — minimize mass s.t. T_bw + service-T constraints
+Same layered TPS cases as run_all_cases.py, but each hc.solve call receives
+a MaterialEngine-backed material_hook so k/rho/cp/Q evolve with temperature
+from kinetic YAML models in MaterialStateSolver/tps_material_db/models/.
+
+Sections:
+  A. Forward solve (1, 2, 3 layers) — coupled.
+  B. optimize_layered (adjoint) — SKIPPED (adjoint assumes constant props).
+  C. optimize_mass_slsqp (SLSQP + FD) — coupled.
+  D. Over-designed → mass reduction — coupled.
 
 Run:
-    python run_all_cases.py
+    python run_coupled_all_cases.py
 """
 
+import sys
+from pathlib import Path
+
+# sys.path hack — no install needed. Points at the sibling MaterialStateSolver repo.
+_MSS_ROOT = Path(__file__).resolve().parent.parent.parent / 'MaterialStateSolver'
+if _MSS_ROOT.exists() and str(_MSS_ROOT) not in sys.path:
+    sys.path.insert(0, str(_MSS_ROOT))
+
 import numpy as np
-import os
 import parameter
 import heatConduction as hc
 import optimizer
+from material_coupling import make_layered_coupler
 
 # ── shared settings ─────────────────────────────────────────────────────────
 
-T_BW_TARGET  = 450.0   # K  back-wall temperature target / limit
-T_MIN        = 0.001   # m  manufacturing minimum thickness per layer (1 mm)
+T_BW_TARGET  = 450.0   # K
+T_MIN        = 0.001   # m
 
-# Set True to couple forward solves and SLSQP with MaterialStateSolver's
-# MaterialEngine (evolving k/rho/cp + reaction heat source Q per YAML
-# kinetic model). Requires MaterialStateSolver to be pip-installed.
-# Material YAMLs are resolved from material names in STACKS (e.g. 'pica'
-# → ablators/pica.yaml under tps_material_db/models/). Adjoint-based
-# Case B (optimize_layered) is NOT wired — it assumes constant props.
-USE_MATERIAL_ENGINE = False
-
-
-def _build_hook(para):
-    """Return a MaterialEngine hook if USE_MATERIAL_ENGINE else None."""
-    if not USE_MATERIAL_ENGINE:
-        return None
-    from material_coupling import make_layered_coupler
-    coupler = make_layered_coupler(para, list(para['materials']))
-    return coupler.hook
-
-# Layer stacks for forward solve (A) and SLSQP (C)
 STACKS = {
     1: {'materials': ['pica'],
         'thicknesses': np.array([0.050])},
@@ -48,19 +43,6 @@ STACKS = {
         'thicknesses': np.array([0.030, 0.005, 0.001])},
 }
 
-# Starting stacks for optimize_layered (B): must start with T_bw > target so
-# the growth/redistribution logic reduces T_bw toward the target.  Stacks A/C
-# can start anywhere (auto-init handles SLSQP; forward solve is just diagnostic).
-STACKS_B = {
-    1: {'materials': ['pica'],
-        'thicknesses': np.array([0.020])},          # thin → T_bw >> 450 K
-    2: {'materials': ['pica', 'steel_304'],
-        'thicknesses': np.array([0.010, 0.001])},   # thin pica → T_bw >> 450 K
-    3: {'materials': ['pica', 'li900', 'steel_304'],
-        'thicknesses': np.array([0.010, 0.002, 0.001])}, # under-insulated → T_bw >> 450 K
-}
-
-# Per-layer service temperature limits for SLSQP (inf = unconstrained)
 SERVICE_TEMPS = {
     1: [np.inf],
     2: [np.inf, np.inf],
@@ -68,10 +50,7 @@ SERVICE_TEMPS = {
 }
 
 
-# ── helpers ──────────────────────────────────────────────────────────────────
-
 def make_para(n_layers):
-    """Build a parameter Series for an n-layer stack."""
     cfg = STACKS[n_layers]
     para = parameter.main()
     para['materials'] = list(cfg['materials'])
@@ -79,19 +58,22 @@ def make_para(n_layers):
     para['layerThicknesses'] = t.copy()
     para['length'] = float(t.sum())
     para = parameter.load_materials(para)
-
     if n_layers == 1:
-        # Upgrade 'constant' path to 'layered' so FD Jacobian works for SLSQP
         props = parameter.load_material(cfg['materials'][0])
         para['material function'] = 'layered'
         para['numberOfLayers'] = 1
         para['layerConductivities'] = np.array([props['conductivity']])
         para['layerDensities']      = np.array([props['density']])
         para['layerHeatCapacities'] = np.array([props['heat_capacity']])
-
     para['back_wall_temperature_target'] = T_BW_TARGET
     parameter.normalize_conductivity(para)
     return para
+
+
+def build_hook(para):
+    """Fresh coupler → fresh material state per hc.solve call."""
+    coupler = make_layered_coupler(para, list(para['materials']))
+    return coupler.hook
 
 
 def section(title):
@@ -105,49 +87,30 @@ def fmt_mm(arr):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# A. FORWARD SOLVE ONLY
-# ═══════════════════════════════════════════════════════════════════════════
-
-section('A. FORWARD SOLVE — 1 layer (pica)')
-para = make_para(1)
-TProfile, cache = hc.solve(para, material_hook=_build_hook(para))
-T_bw = float(np.max(TProfile[-1, :]))
-print(f'  T_backwall_max = {T_bw:.1f} K  |  t = {fmt_mm(para["layerThicknesses"])} mm')
-
-section('A. FORWARD SOLVE — 2 layers (pica + steel_304)')
-para = make_para(2)
-TProfile, cache = hc.solve(para, material_hook=_build_hook(para))
-T_bw = float(np.max(TProfile[-1, :]))
-print(f'  T_backwall_max = {T_bw:.1f} K  |  t = {fmt_mm(para["layerThicknesses"])} mm')
-
-section('A. FORWARD SOLVE — 3 layers (pica + li900 + steel_304)')
-para = make_para(3)
-TProfile, cache = hc.solve(para, material_hook=_build_hook(para))
-T_bw = float(np.max(TProfile[-1, :]))
-print(f'  T_backwall_max = {T_bw:.1f} K  |  t = {fmt_mm(para["layerThicknesses"])} mm')
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# B. OPTIMIZE BACKWALL T  (optimize_layered — adjoint gradient descent)
+# A. FORWARD SOLVE (coupled)
 # ═══════════════════════════════════════════════════════════════════════════
 
 for n in [1, 2, 3]:
-    cfg = STACKS_B[n]
+    cfg = STACKS[n]
     mats = ' + '.join(cfg['materials'])
-    section(f'B. OPTIMIZE T_bw → {T_BW_TARGET} K — {n} layer(s) ({mats})')
+    section(f'A. FORWARD SOLVE (coupled) — {n} layer(s) ({mats})')
     para = make_para(n)
-    # Override thicknesses with the under-insulated starting stack
-    t_b = cfg['thicknesses'].copy()
-    para['layerThicknesses'] = t_b.copy()
-    para['length'] = float(t_b.sum())
-    parameter.normalize_conductivity(para)
-    para_opt, hist = optimizer.optimize_layered(para)
-    T_final = hist[-1]['T_L']
-    print(f'  T_bw_final = {T_final:.1f} K  |  t_opt = {fmt_mm(para_opt["layerThicknesses"])} mm')
+    TProfile, cache = hc.solve(para, verbose=False, material_hook=build_hook(para))
+    T_bw = float(np.max(TProfile[-1, :]))
+    print(f'  T_backwall_max = {T_bw:.1f} K  |  t = {fmt_mm(para["layerThicknesses"])} mm')
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# C. MINIMIZE MASS  (optimize_mass_slsqp — SLSQP + FD Jacobian)
+# B. optimize_layered — SKIPPED (adjoint is invalid with evolving properties)
+# ═══════════════════════════════════════════════════════════════════════════
+
+section('B. optimize_layered — SKIPPED')
+print('  Adjoint in differential.py assumes constant k/rho/cp. Use')
+print('  optimize_mass_slsqp (FD-based) for coupled optimization.')
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# C. MINIMIZE MASS (SLSQP, coupled)
 # ═══════════════════════════════════════════════════════════════════════════
 
 for n in [1, 2, 3]:
@@ -155,14 +118,14 @@ for n in [1, 2, 3]:
     mats = ' + '.join(cfg['materials'])
     svc = SERVICE_TEMPS[n]
     svc_str = ', '.join(
-        f'T_{cfg["materials"][i]}≤{int(svc[i])} K' if not np.isinf(svc[i]) else f'T_{cfg["materials"][i]}=free'
-        for i in range(n)
+        f'T_{cfg["materials"][i]}≤{int(svc[i])} K' if not np.isinf(svc[i])
+        else f'T_{cfg["materials"][i]}=free' for i in range(n)
     )
-    section(f'C. MINIMIZE MASS — {n} layer(s) ({mats})\n     T_bw≤{int(T_BW_TARGET)} K  |  {svc_str}')
+    section(f'C. MINIMIZE MASS (coupled) — {n} layer(s) ({mats})\n     '
+            f'T_bw≤{int(T_BW_TARGET)} K  |  {svc_str}')
 
     para = make_para(n)
-    if USE_MATERIAL_ENGINE:
-        para['material_engine_yamls'] = list(para['materials'])
+    para['material_engine_yamls'] = list(para['materials'])  # enables hook in optimizer
     t0 = cfg['thicknesses'].copy()
     t_min_arr = np.full(n, T_MIN)
 
@@ -187,26 +150,23 @@ for n in [1, 2, 3]:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# D. OVER-DESIGNED → MASS REDUCTION  (explicit before/after demo)
-#    Start from a thick, over-insulated design (T_bw << limit) and show
-#    how much mass SLSQP recovers while still satisfying all constraints.
+# D. OVER-DESIGNED → MASS REDUCTION (coupled)
 # ═══════════════════════════════════════════════════════════════════════════
 
-# Over-designed configs — same as STACKS (high thickness, T_bw well below 450 K)
 STACKS_OVER = {
     1: {'materials': ['pica'],
-        'thicknesses': np.array([0.080])},          # 80 mm — very thick
+        'thicknesses': np.array([0.080])},
     2: {'materials': ['pica', 'steel_304'],
-        'thicknesses': np.array([0.060, 0.005])},   # 60 mm pica + 5 mm steel — heavy
+        'thicknesses': np.array([0.060, 0.005])},
     3: {'materials': ['pica', 'li900', 'steel_304'],
-        'thicknesses': np.array([0.050, 0.010, 0.002])},  # 50+10+2 mm — over-built
+        'thicknesses': np.array([0.050, 0.010, 0.002])},
 }
 
 for n in [1, 2, 3]:
     cfg_over = STACKS_OVER[n]
     mats = ' + '.join(cfg_over['materials'])
     svc = SERVICE_TEMPS[n]
-    section(f'D. OVER-DESIGNED → MASS REDUCTION — {n} layer(s) ({mats})')
+    section(f'D. OVER-DESIGNED → MASS REDUCTION (coupled) — {n} layer(s) ({mats})')
 
     para = make_para(n)
     t_over = cfg_over['thicknesses'].copy()
@@ -214,19 +174,15 @@ for n in [1, 2, 3]:
     para['length'] = float(t_over.sum())
     parameter.normalize_conductivity(para)
 
-    # ── Initial state ────────────────────────────────────────────────────
-    TProfile_init, _ = hc.solve(para, verbose=False, material_hook=_build_hook(para))
+    TProfile_init, _ = hc.solve(para, verbose=False, material_hook=build_hook(para))
     T_bw_init = float(np.max(TProfile_init[-1, :]))
     rho = np.atleast_1d(np.asarray(para['layerDensities'], dtype=float))
     mass_init = float(np.dot(rho, t_over))
     print(f'  Initial design:   t = {fmt_mm(t_over)} mm')
-    print(f'                    mass = {mass_init:.3f} kg/m²')
-    print(f'                    T_bw = {T_bw_init:.1f} K  (limit={int(T_BW_TARGET)} K'
-          f'  →  over-designed by {T_BW_TARGET - T_bw_init:.1f} K)')
+    print(f'                    mass = {mass_init:.3f} kg/m²  (static-density basis)')
+    print(f'                    T_bw = {T_bw_init:.1f} K  (limit={int(T_BW_TARGET)} K)')
 
-    # ── SLSQP minimize mass ───────────────────────────────────────────────
-    if USE_MATERIAL_ENGINE:
-        para['material_engine_yamls'] = list(para['materials'])
+    para['material_engine_yamls'] = list(para['materials'])
     t_min_arr = np.full(n, T_MIN)
     res = optimizer.optimize_mass_slsqp(
         para_base=para,
@@ -244,12 +200,12 @@ for n in [1, 2, 3]:
 
     print(f'\n  Optimized design: t = {fmt_mm(res.x)} mm')
     print(f'                    mass = {res.fun:.3f} kg/m²  '
-          f'(saved {mass_saved_pct:.1f}% of initial mass)')
+          f'(saved {mass_saved_pct:.1f}%)')
     print(f'                    T_bw = {r["T_bw_max"]:.1f} K')
     print(f'                    T_layer_max = {r["T_layer_max"].round(1).tolist()} K')
     print(f'  Status:  {res.message}')
     print(f'  Constraints: {"ALL SATISFIED" if all_ok else "VIOLATED — check above"}')
 
 print('\n' + '='*70)
-print('  All cases complete.')
+print('  All coupled cases complete.')
 print('='*70)

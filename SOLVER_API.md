@@ -6,18 +6,21 @@ This document describes the solver's public interface as consumed by the web app
 
 ## Overview
 
-A transient 1D heat conduction solver with adjoint-based thickness optimizer for layered thermal protection systems (TPS).
+A transient 1D heat conduction solver with adjoint-based thickness optimizer for layered thermal protection systems (TPS). Optionally coupled to `MaterialStateSolver/material_engine` for evolving material properties (pyrolysis, char formation, T-dependent k/ρ/cp) and volumetric reaction heat source Q.
 
 **Physics:**
 - Finite difference, centered in space (2nd order), implicit backward Euler in time (1st order)
 - Newton iteration at each timestep (handles nonlinear re-radiation BC)
 - Spatially varying material properties across layers
 - Re-radiation boundary condition: `q_net = q_in - eps * sigma * (T^4 - T_amb^4)` at `x=0`
+- Optional volumetric heat source Q (W/m³) in the PDE: `ρ·cp·∂T/∂t = ∂/∂x(k·∂T/∂x) + Q`
+- Optional material state coupling: per-layer `MaterialEngine` evolves k, ρ, cp, Q each timestep based on temperature history (pyrolysis, char, porosity, effective-medium conductivity)
 
 **Optimization:**
-- Adjoint method: computes `dJ/dk`, `dJ/drho`, `dJ/dcp` per node in one backward pass
+- Adjoint method: computes `dJ/dk`, `dJ/drho`, `dJ/dcp` per node in one backward pass (constant-property only)
 - Chain rule maps per-node gradients to layer thickness gradients
 - Gradient descent on layer thicknesses; material properties fixed
+- SLSQP mass minimizer: finite-difference Jacobians, compatible with evolving properties
 - Total thickness is free to grow when redistribution alone cannot meet the target
 
 ---
@@ -94,13 +97,14 @@ Use this for real-time streaming of progress to the frontend.
 
 ---
 
-### `hc.solve(para, verbose=True)`
+### `hc.solve(para, verbose=True, material_hook=None)`
 
 **File:** `heatConduction.py`
 
 Runs the forward heat conduction simulation.
 
 - Accepts constant or time-varying BCs (2D array `[[t, q], ...]`)
+- Optional `material_hook(para, cache, timeStep)` is called after each converged Newton step (before `storeUpdateResult`), allowing per-timestep updates to `para['conductivity'/'density'/'heatCapacity'/'volumetricHeatSource']`. See [Material Coupling](#material-coupling) below.
 - Returns `(TProfile, cache)`
   - `TProfile`: np.array shape `(numberOfNode, numberOfTimeStep+1)` — temperature field in space and time
   - `cache`: dict containing `TProfile`, `Jacobian`, `flux_history_x0`, `ce_arr`, `cw_arr`, `Log`
@@ -115,6 +119,51 @@ Runs the adjoint backward pass on a completed forward solve.
 
 - Loss: `J = 0.5 * (max_t T_backwall(t) - target)^2`
 - Returns dict: `{'grad_k', 'grad_rho', 'grad_cp', 'lambda_profile', 'loss'}`
+
+> **NOTE:** The adjoint assumes time-invariant k, ρ, cp and no volumetric source Q. It is NOT valid when `hc.solve` was called with a `material_hook`. Use `optimize_mass_slsqp` (FD-based) for evolving-property optimization.
+
+---
+
+### `optimizer.optimize_mass_slsqp(para_base, t0, T_bw_limit, layer_service_temps, t_min, ...)`
+
+**File:** `optimizer.py`
+
+Constrained areal-mass minimization via SLSQP. Compatible with evolving material properties.
+
+```
+minimize    m(t) = sum_i rho_i * t_i
+subject to  T_backwall_max(t)  <= T_bw_limit
+            T_layer_i_max(t)   <= layer_service_temps[i]   (if finite)
+            t_i >= t_min[i]
+```
+
+#### Key Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `para_base` | pd.Series | Base parameter set (never mutated; copies made internally) |
+| `t0` | np.array (n_layers,) | Initial layer thicknesses (m) |
+| `T_bw_limit` | float | Max allowed backwall temperature (K) |
+| `layer_service_temps` | list[float] | Per-layer service T limits (K); `np.inf` to skip |
+| `t_min` | float or np.array | Lower bound(s) on thicknesses (m) |
+| `t_max` | float, np.array, or None | Upper bound(s); None = no upper bound |
+| `max_iter` | int | Max SLSQP iterations (default 300) |
+| `callback` | callable or None | Called each iteration with progress dict |
+
+#### Enabling Material Coupling
+
+Set `para_base['material_engine_yamls']` to a list of material YAML paths or names (one per layer) before calling. Each forward solve inside the optimizer builds a fresh `LayeredMaterialCoupler` so FD perturbations start from initial material state.
+
+```python
+para['material_engine_yamls'] = ['pica', 'steel_304']
+res = optimizer.optimize_mass_slsqp(para_base=para, ...)
+```
+
+#### Output: `scipy.optimize.OptimizeResult`
+
+Standard scipy result plus:
+- `.history`: list of per-iteration dicts (`mass_kg_m2`, `t_layers_mm`, `T_bw_max`, etc.)
+- `.para_opt`: updated para Series at the optimum
 
 ---
 
@@ -202,3 +251,123 @@ needs_growth = (T_best > target)
 | Optimizer stalls, T_L barely moves | `learning_rate` too small | Increase by 10× |
 | T_L not reaching target after many iters | Total thickness insufficient | Solver will grow thickness automatically; increase `max_iter` |
 | Backwall T overshoots target | Loss tolerance `tol` too loose | Reduce `tol` (e.g., 0.1 instead of 1.0) |
+
+---
+
+## Material Coupling
+
+**File:** `material_coupling.py`
+
+Optional coupling to `MaterialStateSolver/material_engine` for temperature-dependent, evolving material properties. The coupling is **opt-in** and **lazy-imported** — `material_engine` is only loaded when coupling is actually used. The solver runs standalone without it.
+
+### Architecture
+
+Each TPS layer gets its own `MaterialEngine` (loaded from a YAML kinetic model) and `MaterialState` (per-node component densities, structural variables). A `material_hook` callback is called after each converged Newton step inside `hc.solve()`:
+
+```
+for timeStep in 1..N:
+    newtonIteration()        # solve heat equation with current k, rho, cp, Q
+    material_hook()          # evolve state, write updated k, rho, cp, Q into para
+    storeUpdateResult()      # save T to TProfile, advance T0
+```
+
+At the hook call, `cache['T0']` = T_old (previous step) and `cache['T']` = T_new (just converged). The hook calls `MaterialEngine.material_update(T_old, T_new, state, dt)` per layer, then writes per-node arrays back into `para['conductivity'/'density'/'heatCapacity'/'volumetricHeatSource']`.
+
+### Key Classes and Functions
+
+#### `resolve_material_yaml(name_or_path) -> Path`
+
+Resolves a material name (e.g., `'pica'`) or path to an absolute YAML path. Search order:
+1. Literal path (absolute or cwd-relative).
+2. `$MATERIAL_STATE_SOLVER_PATH/tps_material_db/models/**/<name>.yaml`
+3. Default: `../../MaterialStateSolver/tps_material_db/models/` (relative to `material_coupling.py`).
+
+#### `LayeredMaterialCoupler(para, yaml_paths, *, zero_Q=False)`
+
+Creates one `MaterialEngine` + `MaterialState` per layer, sized to `nodesPerLayer` nodes each.
+
+| Method | Description |
+|--------|-------------|
+| `hook(para, cache, timeStep)` | The callable passed to `hc.solve(material_hook=...)` |
+| `reset(para)` | Re-create states from initial YAML and re-seed properties |
+| `states` | List of `MaterialState` objects (one per layer); inspect for component densities, porosity, etc. |
+
+#### `make_layered_coupler(para, yaml_paths=None, *, zero_Q=False)`
+
+Factory. If `yaml_paths` is None, resolves from `para['materials']`.
+
+### Volumetric Heat Source Q
+
+When coupling is active, the `MaterialEngine` returns a per-node Q (W/m³) from reaction enthalpies (e.g., endothermic pyrolysis for PICA: Q < 0). This is added to the PDE residual in `assemble()`:
+
+```
+F = T - T0 - dt/(rho*cp) * diffusion - dt/(rho*cp) * Q
+```
+
+Q is treated as frozen within each Newton iteration (`dQ/dT = 0` in the Jacobian). It is refreshed by the hook between timesteps. For stiff reactions, reduce `CFL` to compensate.
+
+Set `zero_Q=True` in the coupler to disable the source term while still evolving k/ρ/cp (useful for debugging).
+
+### Shared Boundary Nodes
+
+Adjacent layers share a boundary node. When writing per-node properties, layers are iterated in order and **last-write-wins** — the shared node gets layer l+1's properties. This matches `parameter.normalize_conductivity()`.
+
+### Usage Examples
+
+#### Forward solve with coupling
+
+```python
+import heatConduction as hc
+from material_coupling import make_layered_coupler
+
+coupler = make_layered_coupler(para, ['pica', 'steel_304'])
+TProfile, cache = hc.solve(para, material_hook=coupler.hook)
+
+# Inspect final material state
+print(coupler.states[0].component_densities['phenolic_resin'])  # PICA layer
+print(coupler.states[0].structural_variables['porosity'])
+```
+
+#### SLSQP optimizer with coupling
+
+```python
+import optimizer
+
+para['material_engine_yamls'] = ['pica', 'steel_304']
+res = optimizer.optimize_mass_slsqp(
+    para_base=para, t0=t0,
+    T_bw_limit=450.0,
+    layer_service_temps=[np.inf, np.inf],
+    t_min=np.full(2, 0.001),
+)
+```
+
+#### Standalone script
+
+```python
+python run_coupled_all_cases.py   # sys.path hack included, no pip install needed
+```
+
+### Adjoint Compatibility
+
+| Optimizer | Compatible with coupling? | Notes |
+|-----------|--------------------------|-------|
+| `optimize_mass_slsqp` | Yes | FD Jacobians re-run full forward solve; fresh coupler per solve |
+| `optimize_layered` | **No** | Uses adjoint which assumes constant k/ρ/cp and no Q |
+
+### Available Material YAML Models
+
+Located in `MaterialStateSolver/tps_material_db/models/`:
+
+| Material | Category | Key mechanism |
+|----------|----------|---------------|
+| `pica` | ablator | 2-stage phenolic pyrolysis, Bruggeman effective-medium k |
+| `sla561v` | ablator | silicone pyrolysis + filler |
+| `cork_p50` | ablator | cork + binder pyrolysis |
+| `li900` | insulator | 93.5% porosity, radiation-surrogate k (T-dependent) |
+| `li2200` | insulator | 84% porosity, radiation-surrogate k |
+| `alumina` | ceramic | phonon scattering k(T), no reactions |
+| `sic_sic_cmc` | ceramic | 10% porosity, effective medium |
+| `carbon_carbon` | composite | Arrhenius carbon oxidation |
+| `rcc` | composite | SiC coating → SiO₂, then carbon oxidation |
+| `steel_304` | metal | T-dependent k and cp only, no reactions |

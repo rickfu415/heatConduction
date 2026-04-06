@@ -25,6 +25,7 @@ def assemble(para, cache):
     k = para['conductivity']      # numpy array of length numberOfNode
     rho = para['density']          # numpy array of length numberOfNode
     hcp = para['heatCapacity']     # numpy array of length numberOfNode
+    Q = para.get('volumetricHeatSource', None)  # optional per-node source (W/m^3)
     dt = para['deltaTime']
     numberOfNode = para['numberOfNode']
     dx_arr = para['dx_array']      # non-uniform grid spacing (length N-1)
@@ -196,6 +197,11 @@ def assemble(para, cache):
     diffusion = utility.variableCoefficientDiffusion(T, k, dx_arr, Ug1, Ug2)
     rho_cp = (rho * hcp).reshape(-1, 1)
     F = T - T0 - dt / rho_cp * diffusion
+    if Q is not None:
+        # PDE: rho*cp*dT/dt = d/dx(k dT/dx) + Q  →  subtract dt/(rho*cp)*Q from F.
+        # Q is treated frozen within each Newton iteration (dQ/dT=0 in Jacobian);
+        # it is refreshed externally by material_hook between timesteps.
+        F = F - dt / rho_cp * np.asarray(Q).reshape(-1, 1)
 
     # Store in cache (ce/cw arrays used by adjoint for grad_k)
     cache['F'] = -F; cache['Jacobian'] = Jacobian
@@ -307,7 +313,7 @@ def newtonIteration(para, cache, verbose=True):
     return cache
 
 
-def solve(para, verbose=True):
+def solve(para, verbose=True, material_hook=None):
     """ Main function to solve heat conduction
 
     Input: a Pandas series containing all parameters
@@ -318,6 +324,13 @@ def solve(para, verbose=True):
         3. Newton's iteration for discretized PDE for singe time
            step
         4. Update T, save result to T profile
+
+    Optional material_hook(para, cache, timeStep) is called after each
+    converged Newton step (and before cache['T0'] is overwritten), with
+    cache['T0']=T_old and cache['T']=T_new. The hook may mutate
+    para['conductivity'/'density'/'heatCapacity'/'volumetricHeatSource']
+    in place; the next timestep's assemble() will read the updated
+    arrays. See material_coupling.LayeredMaterialCoupler.
 
     Return: temperature profile as final result
     """
@@ -352,6 +365,9 @@ def solve(para, verbose=True):
             para['x=L value'] = float(np.interp(t_phys, flux_profile_xL[:, 0], flux_profile_xL[:, 1]))
         flux_history_x0[timeStep] = para['x=0 value'] if np.isscalar(para['x=0 value']) else float(para['x=0 value'])
         cache = newtonIteration(para, cache, verbose=verbose)
+        if material_hook is not None:
+            # Call BEFORE storeUpdateResult so cache['T0']=T_old, cache['T']=T_new.
+            material_hook(para, cache, timeStep)
         cache = storeUpdateResult(cache)
 
     # Store flux history for potential adjoint use; restore original BC values

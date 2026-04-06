@@ -14,6 +14,12 @@ import parameter as parameter
 def main(para, cache, verbose=True, obs_node=None, seed_value=None):
     """ Adjoint calculation for spatially varying properties.
 
+    NOTE: this adjoint assumes time-invariant k, rho, cp and NO
+    volumetric source Q. It is NOT valid when hc.solve was called with
+    a material_hook (e.g. MaterialEngine coupling) or when
+    para['volumetricHeatSource'] is set. For evolving-property
+    optimization, use the FD-based SLSQP path (optimize_mass_slsqp).
+
     Computes per-node gradients: dJ/dk, dJ/drho, dJ/dcp.
 
     Default mode (obs_node=None, seed_value=None):
